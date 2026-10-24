@@ -1,0 +1,105 @@
+# ADR 0004: 모델 제공자 인증과 자격증명
+
+## 상태
+
+Accepted (2026-10-23 팀 결정).
+Jira는 원칙을 정했지만 방식은 정하지 않았다. 이 ADR은 그 원칙을 지키는 방식을 정한다.
+
+## 날짜
+
+2026-10-21
+
+## 맥락
+
+- SCRUM-65는 API key 비필수, 로그인 비밀의 노출·평문 복사 금지, 인증 실패와 실행 실패 구분, 개념 분리를 요구한다 (인수 조건은 Jira). SCRUM-34·58은 앱 설정에 자격증명 원문을 두지 말라고, SCRUM-49는 비밀을 마스킹하고 검사할 수 없으면 "검사 불가"로 표시하라고 요구한다.
+- 실제 AWS Bedrock 연동은 post-MVP다 (SCRUM-25·34의 post-mvp 라벨, 2026-10-22 팀 결정). MVP에서는 Bedrock과 같은 API로 응답하는 mock 서버로 모델 제공자 전환 흐름을 확인한다 (2026-10-23 팀 결정, 결정 10, SCRUM-67).
+- 배포 서비스의 모델은 Amazon Bedrock으로 제공한다. Codex의 ChatGPT 로그인(SCRUM-65)은 MVP 확인용이고 배포 서비스에서는 쓰지 않는다 (2026-10-23 팀 결정).
+- Anthropic은 제품을 만드는 개발자에게 Claude Console의 API key나 클라우드 제공자 인증을 쓰라고 하고, 제3자 앱이 Claude.ai 로그인을 제공하는 것을 허용하지 않는다 ([Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)). 제품에서 Claude Code를 실행하는 조건은 [ADR 0003](0003-acp-integration.md)의 열린 질문이다.
+- 어댑터와 ACP의 인증 사실은 아래 표와 같다 (2026-10-20 기준).
+
+| 대상              | 사실                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| codex-acp         | agent 유형의 `api-key`, `chat-gpt`(`NO_BROWSER`가 없을 때), `chat-gpt-device-code`(URL elicitation을 지원하는 클라이언트에만), `gateway`(클라이언트가 `auth._meta.gateway`를 광고할 때만)를 광고한다 ([CodexAuthMethod.ts](https://github.com/agentclientprotocol/codex-acp/blob/main/src/CodexAuthMethod.ts)). `chat-gpt`는 코드상 어댑터가 브라우저를 직접 연다 (데스크톱 GUI에서의 실제 동작은 미검증). 자격증명은 Codex가 `CODEX_HOME`의 `auth.json` 또는 keyring에 저장하고, 코드 기본값은 file이다 ([Codex 인증](https://learn.chatgpt.com/docs/auth)) |
+| claude-agent-acp  | `auth.terminal=true`일 때만 terminal 유형의 `claude-ai-login`, `console-login`(원격 환경에서는 `claude-login`)을 광고한다. 클라이언트가 `auth._meta.gateway`를 광고하면 `gateway`, `gateway-bedrock`(baseUrl과 headers 방식)도 광고한다. API key와 AWS profile 방식의 Bedrock을 위한 ACP 메서드는 없고 env로 받는다. user·project·local 설정(`~/.claude/settings.json`, 프로젝트의 `.claude/settings.json`·`.claude/settings.local.json`)을 읽는다 ([acp-agent.ts](https://github.com/agentclientprotocol/claude-agent-acp/blob/main/src/acp-agent.ts))      |
+| ACP terminal 인증 | 클라이언트가 같은 어댑터를 대화형으로 다시 띄우고, 종료 코드 0을 기다린 뒤, 다시 연결해서 `initialize`한다. terminal 방법에는 `authenticate`를 보내지 않는다 ([Authentication](https://agentclientprotocol.com/protocol/authentication))                                                                                                                                                                                                                                                                                                                     |
+| ACP 기타          | env_var 인증 방식은 2026-07-27에 제거되었다 ([auth-methods RFD](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/docs/rfds/auth-methods.mdx)). 두 어댑터 모두 확장 통지 `_auth/status_update`(kind, label)를 보낸다. 표준 `auth/status`는 Draft RFD다                                                                                                                                                                                                                                                                                  |
+
+## 결정
+
+1. 개념은 [용어집](../architecture.md#용어집), AgentConfig 필드와 호환성 규칙은 [Agent config registry](../architecture.md#agent-config-registry)를 따른다 (SCRUM-10, 65). 인증과 관련해 앱이 저장하는 값은 `authMethodId`와 자격증명 참조(`providerSettings.awsProfile`, `providerSettings.awsRegion`)뿐이다.
+2. 원칙은 "맡기고, 보관하지 않는다"이다. MVP에서 agents-room은 비밀을 하나도 보관하지 않는다. 비밀은 Codex(`auth.json` 또는 keyring)와 AWS 표준 체계(`~/.aws`, SSO cache, `credential_process`)가 가진다. Claude Code는 Claude 계정에 로그인하지 않으므로(결정 4) 자기 비밀을 갖지 않는다.
+3. 실행기의 자격증명 파일은 읽지 않는다. `~/.aws`와 실행기 설정 파일은 복사하거나 고쳐 쓰지 않는다. 연결 확인(결정 6)에서는 AWS SDK가 `~/.aws`를 읽어 profile과 자격증명을 해석하지만, 앱은 그 값을 저장하거나 로그에 남기지 않는다. 업스트림 교훈 "우리가 만들지 않은 형식은 고쳐 쓰지 않는다"와 같은 취지다. ACP로 비밀을 보내는 경로(`api-key`의 `_meta`, `DEFAULT_AUTH_REQUEST`, `providers/set` headers, gateway 방식)도 쓰지 않는다.
+4. 실행기별 방식은 아래 인증 방식 표를 따른다. Claude Code는 에이전트로 그대로 쓰고, 모델 요청만 Bedrock으로 보낸다(MVP는 결정 10의 mock). Claude 계정 로그인(`claude-ai-login`, `console-login`)과 Anthropic API key는 쓰지 않는다 (2026-10-23 팀 결정). Bedrock의 인증 방식은 `aws-profile` 하나다. 사용자가 이미 구성한 profile(SSO, `credential_process`, 키)을 고르게 하고, GUI에서 키나 bearer token을 입력받지 않는다.
+5. env 위생:
+   - 자식 env에는 비밀이 아닌 참조값만 넣는다.
+   - 사용자 환경에 남은 자격증명 변수(`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`)는 자식 env에서 지우고, 지웠다는 사실을 진단에 표시한다.
+   - 이유: Claude Code에서는 bearer token이 profile보다 우선하고([Bedrock](https://code.claude.com/docs/en/amazon-bedrock)), 오래된 `ANTHROPIC_API_KEY`가 구독 로그인보다 우선한다([인증](https://code.claude.com/docs/en/authentication)).
+   - 한계: Claude Code는 설정 파일의 `env` 값으로 셸 env를 덮어쓴다([설정](https://code.claude.com/docs/en/settings-reference#env)). claude-agent-acp는 user 설정(`~/.claude/settings.json`)뿐 아니라 프로젝트의 `.claude/settings.json`과 `.claude/settings.local.json`도 읽는다. 이 파일들에 남은 자격증명, profile, region 값은 이 방법으로 막지 못하므로 진단 안내에 적는다.
+   - region은 `AWS_REGION`으로 명시한다. Java SDK는 `AWS_DEFAULT_REGION`을 읽지 않는다 ([Region 선택](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/region-selection.html)).
+   - `HOME`과 `USERPROFILE`은 유지한다. 실행기가 자기 자격증명을 찾아야 하기 때문이다.
+6. 연결 확인(`checkConnection`): MVP 실행기는 어댑터를 띄워 `initialize`를 보내고, 광고된 `authMethods`와 인증 방식 표의 "상태 확인" 열로 인증 상태를 본다. 세션은 만들지 않는다. Bedrock은 유료 invoke 없이 AWS 단계를 더한다: 고른 profile과 region으로 STS [`GetCallerIdentity`](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html)(자격증명) → `ListInferenceProfiles` 또는 `ListFoundationModels`(권한과 카탈로그) → [`GetFoundationModelAvailability`](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_GetFoundationModelAvailability.html)(계약, 승인, 리전). 실패하면 필요한 IAM action 이름을, Anthropic 모델에는 First Time Use 양식 안내를 보여준다 ([모델 접근](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)). 모델 목록은 하드코딩하지 않는다. 검사할 수 없는 단계는 `CHECK_UNAVAILABLE`로 표시하고 정상으로 보지 않는다. MVP의 Bedrock mock(결정 10)은 AWS 단계 대신 mock 서버가 응답하는지만 확인한다.
+7. 인증 오류는 아래 감지 표처럼 판정한다 (SCRUM-14, 25, 65). ACP 요청에서 나오는 `AUTH_REQUIRED`와 `AUTH_FAILED`는 [ADR 0003](0003-acp-integration.md)의 감지 표, 코드의 정의는 [ADR 0005](0005-agent-event-model.md)에 있다. Bedrock은 만료된 토큰을 403으로 알리므로 403만으로는 만료와 권한 거부를 구분할 수 없다. 401을 만료로 보는 것은 Mantle에서뿐이다 ([Claude Code 오류](https://code.claude.com/docs/en/errors)). 그래서 Bedrock Runtime의 403과 401은 STS를 다시 불러서 판정한다.
+8. 마스킹 (SCRUM-15, 34, 49): Spring 로깅에 중앙 마스킹 계층을 둔다. 키 이름 기준(`*_API_KEY`, `*TOKEN*`, `*SECRET*`, `Authorization`, `AWS_SESSION_TOKEN`)과 값 패턴 기준(`AKIA`/`ASIA` 접두 access key ID, `sk-` 접두 키, Bearer 값)을 함께 쓴다 ([OWASP Logging](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)). 자식 env 맵 전체를 로그로 남기지 않는다. 어댑터 stderr와 `app-server.log`는 신뢰할 수 없는 출력이다. `APP_SERVER_LOGS`는 기본으로 끈다 (codex-acp Logger는 redaction 없이 기록한다). 비밀을 클립보드나 로그로 자동으로 옮기지 않는다 (SCRUM-34).
+9. UI에 보이는 인증 정보는 어댑터가 보고한 인증 kind와 label, 사용자가 고른 profile 이름과 region, 성공과 실패뿐이다. 요금제(plan)는 앱이 설정하지 않으며, 어댑터가 label로 보고한 경우에만 그대로 보여준다 (SCRUM-65). 비밀은 어디에도 표시하지 않는다.
+10. MVP의 Bedrock은 mock 서버다 (2026-10-23 팀 결정). 개발 PC나 CI에서 실제 Bedrock과 같은 API로 응답하는 mock을 띄우고, 어댑터가 그 주소로 요청하게 한다. 실제 AWS로 바꿀 때는 엔드포인트 지정과 인증 생략만 빼면 되게 만든다.
+    - Claude Code (MVP의 Claude Code 연결 경로, SCRUM-66): spawn env로 `CLAUDE_CODE_USE_BEDROCK=1`, `ANTHROPIC_BEDROCK_BASE_URL=<mock 주소>`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1`을 준다 ([gateway 연결](https://code.claude.com/docs/en/llm-gateway-connect)). mock은 Claude Code가 쓰는 Bedrock Invoke API(`InvokeModelWithResponseStream`, `application/vnd.amazon.eventstream` 스트림)로 응답해야 한다 ([Bedrock](https://code.claude.com/docs/en/amazon-bedrock)). 실행해 보니(2026-10-23, [ADR 0003](0003-acp-integration.md) 맥락) Claude Code는 같은 주소로 `GET /inference-profiles?type=SYSTEM_DEFINED`(모델 목록)도 부르고, 세션 제목을 만들 때 다른 모델 ID로도 요청하며, 요청에 인증 헤더가 없다. mock은 모델 목록과 임의의 모델 ID를 받아야 한다.
+    - Codex: Bedrock provider(`amazon-bedrock-runtime`)의 주소는 region으로 정해지고, 바꾸는 방법은 문서에 없다 ([Codex Bedrock](https://learn.chatgpt.com/docs/amazon-bedrock)). mock의 OpenAI 호환 경로(`/openai/v1`)를 가리키는 사용자 정의 provider를 `CODEX_CONFIG`로 넘기는 방법을 spike로 확인한다 (미검증).
+    - mock은 미리 정한 응답을 돌려주며 실제 모델을 부르지 않는다. 그래서 AWS 계정과 비용이 필요 없다. Claude Code 자체는 실제로 실행된다. 응답에 도구 호출(예: 파일 읽기)을 넣으면 Claude Code가 그 도구를 실제로 실행하므로, 권한 대화상자와 도구 이벤트까지 확인할 수 있다. 무엇을 할지 정하는 판단만 대본이다. 실제 코딩 작업은 MVP에서 Codex(SCRUM-65)로 확인한다. 화면에는 제공자를 "Amazon Bedrock (mock)"으로 표시해 실제 Bedrock으로 오해하지 않게 한다.
+    - mock은 Node.js(TypeScript) 스크립트로 만들고 `node`로 실행한다. Docker는 쓰지 않는다 (2026-10-24 팀 결정). GitHub의 Windows 러너는 Linux 컨테이너를 돌리지 못하고 macOS 러너에는 Docker가 없어서([runner-images#1143](https://github.com/actions/runner-images/issues/1143), 공식 문서는 미확인), 컨테이너로 만들면 CI의 e2e가 mock을 쓸 수 없다. e2e(Playwright)와 같은 언어라 테스트에서 띄우고 끄기도 쉽다. MVP 확인과 e2e용이며, 일반 사용자 배포본에는 넣지 않는다.
+
+| 대상                                          | 방식                                                                                                                                                                                                                                                                                                                                                                                    | 상태 확인                                                           |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Codex (SCRUM-65, MVP 확인용)                  | `chat-gpt`로 `authenticate`를 보낸다. 런타임은 `NO_BROWSER`를 설정하지 않는다. `api-key`는 MVP UI에서 숨긴다                                                                                                                                                                                                                                                                            | `_auth/status_update`. 보조로 `codex login status` 종료 코드 (선택) |
+| Claude Code + Bedrock mock (SCRUM-66·67, MVP) | 결정 10의 spawn env로 mock에 연결한다. 인증 단계가 없고, `auth.terminal`을 광고하지 않는다 ([ADR 0003](0003-acp-integration.md))                                                                                                                                                                                                                                                        | 결정 6 (mock 응답 확인)                                             |
+| Claude Code + Bedrock (post-MVP, SCRUM-25·34) | spawn env로 `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_PROFILE`, `AWS_REGION`, `ANTHROPIC_MODEL`(inference profile ID)을 준다 ([Bedrock](https://code.claude.com/docs/en/amazon-bedrock))                                                                                                                                                                                                        | 결정 6                                                              |
+| Codex + Bedrock (post-MVP, SCRUM-25)          | provider `amazon-bedrock-runtime`을 쓴다. profile과 region은 spawn env의 `AWS_PROFILE`, `AWS_REGION`으로 넘긴다 ([Codex Bedrock](https://learn.chatgpt.com/docs/amazon-bedrock)). `~/.codex/config.toml`을 고치지 않고 `model_provider`를 고르는 방법(`MODEL_PROVIDER`·`CODEX_CONFIG` 또는 `-c`)은 spike로 정한다 (미검증). 확인되기 전에는 실행할 수 있다고 표시하지 않는다 (SCRUM-26) | 결정 6                                                              |
+| 추가 제공자, 로컬 모델 (SCRUM-58)             | 필요해지면 OS 보안 저장소에 보관하고 spawn 때만 env로 넘긴다 (아래 첫 대안)                                                                                                                                                                                                                                                                                                             | 미정                                                                |
+
+| 감지원                                                                                                                                                                                  | code                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `_auth/status_update`의 kind `none`, `codex login status` 종료 코드 1                                                                                                                   | `AUTH_REQUIRED`               |
+| `SdkClientException` "Unable to load credentials"([자격증명 체인](https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/credentials-chain.html)), SSO 세션 만료, profile 없음 | `AWS_CREDENTIALS_UNAVAILABLE` |
+| `ExpiredTokenException`, `UnrecognizedClientException`, `InvalidClientTokenId`                                                                                                          | `AWS_CREDENTIALS_INVALID`     |
+| `AccessDeniedException`                                                                                                                                                                 | `BEDROCK_ACCESS_DENIED`       |
+| availability `NOT_AVAILABLE`·`PENDING`·`ERROR`, `NOT_AUTHORIZED`, on-demand throughput 미지원                                                                                           | `BEDROCK_MODEL_UNAVAILABLE`   |
+| `ThrottlingException` ([Bedrock 공통 오류](https://docs.aws.amazon.com/bedrock/latest/APIReference/CommonErrors.html))                                                                  | `THROTTLED`                   |
+
+## 검토한 대안
+
+### 앱이 OS 보안 저장소에 비밀을 보관
+
+- 장점: 어댑터에 로그인 절차가 없는 제공자에도 쓸 수 있다 (SCRUM-58).
+- 단점: 셸이 Electron이므로(ADR 0001) 저장소는 Electron `safeStorage`가 된다. `safeStorage`는 backend가 `basic_text`면 저장을 거부해야 한다 ([safeStorage](https://www.electronjs.org/docs/latest/api/safe-storage)). Java의 java-keyring은 2023년 이후 릴리스가 없다 (2026-10-20 기준). spawn 때 env로 넣으면 Linux에서는 같은 사용자의 다른 프로세스가 `/proc/<pid>/environ`으로 읽을 수 있다.
+- 판단: SCRUM-58에서 필요해지면 쓴다. 그때도 Java 쪽은 저장 주체가 되지 않는다.
+
+### ACP로 비밀 전달
+
+- 장점: 어댑터가 이미 받는 경로다 (`api-key`의 `_meta`, `providers/set`).
+- 단점: 비밀이 프로토콜 채널을 지나고 로그에 남을 위험이 있다. `providers/set`은 Draft다.
+- 판단: 채택하지 않는다.
+
+### 앱이 실행기 설정 파일을 직접 작성
+
+- 장점: 사용자가 실행기를 따로 설정하지 않아도 된다.
+- 단점: `~/.codex/config.toml`, `~/.claude/settings.json`은 우리가 만든 형식이 아니다 (결정 3).
+- 판단: 채택하지 않는다.
+
+## 결과
+
+- 좋은 점: SCRUM-65와 34의 저장·노출 금지 조건을 구조적으로 충족한다.
+- 비용과 위험: Codex 로그인 UX를 어댑터에 의존한다 (브라우저). 진단 정보가 적다. 실행기 설정 파일에 남은 자격증명은 막지 못한다 (결정 5).
+- 후속 작업: 마스킹 계층 구현 (상속 코드에는 redaction 유틸이 없다), Codex 브라우저 로그인 확인, Bedrock mock 서버 구현과 e2e 연결 (SCRUM-67), Codex + Bedrock(mock 경로 포함) spike.
+
+### 열린 질문
+
+- Codex `chat-gpt` 로그인에서 어댑터가 데스크톱 앱 밖의 브라우저를 제대로 여는지 (미검증). 안 되면 URL elicitation(device code)을 검토한다.
+- Codex + Bedrock: `model_provider` 전달 방식, 경로(Runtime 대 Mantle)와 기본 region, 최소 버전 0.128.0 (검색 요약에서 본 값이라 미검증).
+- Bedrock mock이 미리 정한 응답만 줄지, 실제 모델로 중계할지. 지금은 미리 정한 응답이다 (결정 10).
+- 연결 확인에서 유료 호출을 허용할지.
+- Bedrock의 gpt-oss를 숨길지 "실험적"으로 표시할지. Codex에서 쓸 수 있는지는 문서가 없다 (SCRUM-25).
+- 신원 정보(이메일, AWS 계정 ID)를 표시할지 (PII).
+- Claude Code `/setup-bedrock`은 고른 인증 정보를 `~/.claude/settings.json`의 `env`에 저장하고, 그 값은 평문이다 ([Bedrock](https://code.claude.com/docs/en/amazon-bedrock), [설정](https://code.claude.com/docs/en/settings-reference#env)). 이를 사용자에게 경고할지.
+
+## 관련 이슈
+
+SCRUM-10, 14, 15, 25, 26, 34, 49, 58, 65, 66, 67 / [ADR 0001](0001-desktop-framework.md), [ADR 0003](0003-acp-integration.md), [ADR 0005](0005-agent-event-model.md) / [architecture.md#용어집](../architecture.md#용어집), [architecture.md#agent-config-registry](../architecture.md#agent-config-registry), [ux.md#관찰한-것만-보여준다](../ux.md#관찰한-것만-보여준다)

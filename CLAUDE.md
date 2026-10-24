@@ -1,5 +1,7 @@
 # Pixel Agents — Compressed Reference
 
+> **This repo is the agents-room fork.** This file describes the inherited pixel-agents code at fork base `d1e007a`, not the agents-room target design. For the product, start with `README.md`, then `docs/architecture.md` (its glossary wins over any term defined below), `docs/ux.md` and `docs/adr/`. `CONTEXT.md` and `docs/adr/0001` mentioned below are upstream documents removed from this fork — see `docs/upstream.md` (레거시 참조).
+
 Pixel art office where AI agents (Claude Code terminals today, any tool tomorrow) become animated characters. Ships as a **VS Code extension** and an **`npx pixel-agents` standalone CLI** from the same source tree.
 
 `CONTEXT.md` is the canonical glossary — read it for what terms like Agent, Sub-agent, Teammate, Lead, Adopt, or Headless agent mean here, and use its vocabulary in code, comments, and docs.
