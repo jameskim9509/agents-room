@@ -1,6 +1,6 @@
 # 아키텍처
 
-이 문서는 agents-room의 목표 구조를 설명한다. 코드는 대부분 pixel-agents 기준선([`d1e007a`](upstream.md#포크-기준)) 그대로다. 로컬 런타임은 골격([`runtime/`](#로컬-런타임-코드-구성))만 있고, 나머지 구성요소는 계획이다.
+이 문서는 agents-room의 목표 구조를 설명한다. 구현을 시작한 것은 [데스크톱 셸](#데스크톱-셸)(`desktop/`)과 렌더러의 데스크톱 분기, 로컬 런타임의 골격([`runtime/`](#로컬-런타임-코드-구성))뿐이다. 나머지 코드는 아직 pixel-agents 기준선([`d1e007a`](upstream.md#포크-기준)) 그대로이고, 나머지 구성요소는 계획이다.
 화면과 문구는 [ux.md](ux.md), 결정과 대안은 [ADR](adr/README.md), 업스트림 코드 상세는 [upstream.md](upstream.md)에 있다.
 
 ## 용어집
@@ -63,6 +63,37 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 - ACP 메시지는 런타임 밖으로 나가지 않는다. 렌더러는 정규화된 AgentEvent만 받으므로, 실행기가 달라도 같은 런타임 API를 쓴다 (SCRUM-9).
 - ACP 어댑터는 실행기 실행, Tool 실행, 모델 호출, 자체 자격증명 저장을 맡고 agents-room의 상태는 모른다 (SCRUM-23, 66).
 
+## 데스크톱 셸
+
+코드는 npm 워크스페이스 `desktop/`에 있다. main과 preload를 esbuild로 `desktop/dist/`에 묶는다(CJS). 결정과 이유는 [ADR 0001](adr/0001-desktop-framework.md)에 있다.
+
+| 파일 (`desktop/src/`)                                                           | 맡는 일                                                                                    |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `main.ts`                                                                       | 앱 생명주기, 단일 인스턴스 잠금, 창 생성, 실패 대화상자, 종료 때 런타임 정리               |
+| `appProtocol.ts`, `bundlePath.ts`                                               | Vite 빌드(`dist/webview`)를 `app://bundle/`로 내보낸다. 경로 탈출을 막고 CSP 헤더를 붙인다 |
+| `window.ts`                                                                     | 창 옵션, 새 창·webview·외부 내비게이션 차단, 권한 거절                                     |
+| `preload.ts`, `ipc.ts`                                                          | `window.agentsRoom` API 두 개와 IPC sender 검증                                            |
+| `runtimeSupervisor.ts`, `runtimeCommand.ts`, `readyLine.ts`, `runtimeLog.ts` 등 | 런타임 실행 명령 결정, 실행, 준비 줄 해석, 로그와 토큰 가리기, 프로세스 트리 종료          |
+
+- 렌더러 출처는 `app://bundle`이다. CSP와 스킴 권한은 ADR 0001 결정 6에 있다. CSP 헤더는 400과 404 응답에도 붙는다. 오류 응답도 렌더러 출처의 문서이기 때문이다. `npm run desktop:dev`는 Vite dev 서버(`http://localhost:5173`)를 띄우고, 이때만 그 출처를 허용하며 CSP 헤더를 붙이지 않는다.
+- preload API는 `getRuntimeEndpoint(): Promise<{url, token}>`과 `pickProjectFolder(): Promise<string | null>` 두 개뿐이다. 타입은 `core/src/desktopBridge.ts`에 있다. 접속 정보는 런타임의 준비 줄이 온 뒤에야 응답한다.
+- 렌더러는 `window.agentsRoom`이 있으면 데스크톱으로 판단한다(`webview-ui/src/runtime.ts`). `transport/index.ts`는 접속 정보를 받아 `?token=`을 붙이고 `WebSocketTransport`로 직접 접속한다. 다시 접속할 때마다 접속 정보를 새로 묻는다. 런타임을 다시 시작하면 포트와 토큰이 바뀌기 때문이다.
+- `WebSocketTransport`는 구독자가 생기기 전에 온 메시지를 순서대로 잡아 두었다가 첫 구독자에게 넘긴다. 연결 직후 오는 메시지를 잃지 않기 위해서다.
+- 렌더러는 스프라이트, 가구, 기본 레이아웃을 자기 번들에서 읽는다(`webview-ui/src/localAssets.ts`). Vite 빌드가 디코딩한 JSON(`assets/decoded/*.json`)을 함께 내보낸다. 런타임은 에셋을 보내지 않는다.
+- 데스크톱에서는 레이아웃 편집("Layout")과 "+ Agent" 버튼을 숨긴다. 레이아웃 편집은 post-MVP다 (SCRUM-59). Settings에서도 VS Code나 업스트림 서버만 처리하는 항목을 숨긴다: Open Sessions Folder, Export/Import Layout, Add Asset Directory, Watch All Sessions, Instant Detection (Hooks), Display Headless as Ghosts. 런타임이 맡을 설정은 계약이 정해지면 다시 넣는다.
+
+### 셸과 런타임의 약속
+
+셸은 런타임을 띄우고 지켜본다. 형식은 ADR 0001 결정 4와 5에, 두 쪽이 함께 따르는 계약은 [셸과 런타임의 연결](#셸과-런타임의-연결)에 있다.
+
+1. 실행 명령을 정한다: `AGENTS_ROOM_RUNTIME_COMMAND`(JSON argv, 테스트와 디버깅용) → `runtime/build/dev-runtime.json`(`{"java", "jar"}`, 런타임 Gradle 빌드가 쓴다) 순서다. 둘 다 없으면 실패 대화상자를 띄운다. 설치판의 경로는 패키징 때 정한다. 셸의 테스트·개발용 환경변수(`AGENTS_ROOM_RUNTIME_COMMAND`, `AGENTS_ROOM_READY_TIMEOUT_MS`, `AGENTS_ROOM_USER_DATA_DIR`, `AGENTS_ROOM_RENDERER_URL`)는 패키징하지 않은 실행에서만 읽는다(`devOverrides.ts`). 설치판은 모두 무시한다.
+2. 환경변수 `AGENTS_ROOM_TOKEN`, `AGENTS_ROOM_DATA_DIR`(Electron `userData`), `AGENTS_ROOM_ALLOWED_ORIGINS`를 넘기고 UTF-8 JVM 옵션으로 띄운다. 셸 전용 환경변수는 넘기지 않는다. 모든 OS에서 detached로 띄운다. Windows에서는 셸의 job object 밖에 두기 위해서다. 그 안에 있으면 셸이 죽을 때 OS가 런타임도 바로 끝내서, 런타임이 어댑터를 정리하지 못한다.
+3. stdout의 `AGENTS_ROOM_READY {"port":<int>}`를 30초 기다린다. 그 밖의 stdout과 stderr는 `<userData>/logs/runtime.log`에 토큰을 가려서 쓴다. 셸도 실행마다 `the runtime started (pid N)` 줄을 남긴다. 앞 세션의 로그는 `runtime.previous.log`로 한 번 남긴다. 이름을 바꾸지 못하면(다른 프로그램이 파일을 열고 있을 때) `runtime.log`에 이어 쓰고, 그 파일도 열 수 없으면 `runtime-<pid>.log`에 쓴다. 실패 대화상자는 실제로 쓰는 파일의 경로를 보여준다.
+4. 시작 실패나 예상하지 않은 종료에는 "로컬 런타임을 시작하지 못했습니다" 대화상자를 띄운다 (문구는 [ux.md](ux.md#문구-목록)). "다시 시작"은 새 토큰으로 런타임을 한 번 더 띄운다. 자동으로 다시 시작하지 않는다.
+5. 앱을 끄면 stdin을 닫고 3초 기다린 뒤, 살아 있으면 프로세스 트리를 강제로 끝낸다.
+
+e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런타임(`e2e/desktop/fixtures/fake-runtime.cjs`)으로 셸을 검증한다.
+
 ## 런타임 구성요소
 
 ### Project/Workspace service
@@ -120,7 +151,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 ### Persistence
 
-- 셸이 넘긴 앱 데이터 디렉터리(`AGENTS_ROOM_DATA_DIR`) 아래 `runtime/`에 저장한다. 업스트림이 쓰는 `~/.pixel-agents/`와는 공유하지 않는다. 프로젝트 설정도 사용자의 프로젝트 폴더 안에 쓰지 않는다 (제안).
+- 셸이 넘긴 앱 데이터 디렉터리(`AGENTS_ROOM_DATA_DIR`, Electron `userData`) 아래 `runtime/`에 저장한다. 업스트림이 쓰는 `~/.pixel-agents/`와는 공유하지 않는다. 프로젝트 설정도 사용자의 프로젝트 폴더 안에 쓰지 않는다 (제안).
 
   ```text
   <AGENTS_ROOM_DATA_DIR>/runtime/
@@ -151,19 +182,20 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 실행        | `<java> -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -jar <jar>`. stdin, stdout, stderr는 모두 pipe다. 셸은 런타임이 살아 있는 동안 stdin을 열어 둔다                                                                                                                                                                                 |
 | env         | `AGENTS_ROOM_TOKEN`: 실행마다 새로 만든 32바이트 난수(base64url). `AGENTS_ROOM_DATA_DIR`: 앱 데이터 디렉터리(절대 경로). `AGENTS_ROOM_ALLOWED_ORIGINS`: 쉼표로 구분한 Origin 목록. 토큰이 없거나 43자 base64url이 아니면, 또는 데이터 디렉터리가 없거나 절대 경로가 아니면 시작하지 않는다. 이때 stdout에는 아무것도 쓰지 않고 0이 아닌 코드로 끝난다          |
-| Origin 목록 | 배포본은 `app://bundle`이고, 개발 중에는 `http://localhost:5173`을 더한다. 변수가 없으면 `app://bundle`만 허용한다                                                                                                                                                                                                                                             |
+| Origin 목록 | 배포본은 `app://bundle`이고, `desktop:dev`에서만 `http://localhost:5173`을 더한다. 변수가 없으면 `app://bundle`만 허용한다                                                                                                                                                                                                                                     |
 | 준비 줄     | 127.0.0.1의 임시 포트에 바인딩하고, 준비되면 stdout에 `AGENTS_ROOM_READY {"port":<int>}`와 `\n`을 UTF-8로 한 번 쓴다. 그 밖의 출력(로그 전부)은 stderr로 간다. 읽는 쪽은 줄 끝의 `\r`을 지운다                                                                                                                                                                 |
 | 렌더러 접속 | `ws://127.0.0.1:<port>/ws?token=<token>`. 토큰이 없거나 틀리면 업그레이드 전에 401이다(상수 시간 비교). Origin 헤더가 있는데 목록에 없으면 403이다. Origin이 없는 클라이언트(Node, curl)도 토큰은 있어야 한다                                                                                                                                                  |
 | 로그        | access log는 없다. 마스킹 계층이 토큰 값, `token=`, `*_API_KEY`·`*TOKEN*`·`*SECRET*`·`Authorization` 뒤의 값, Bearer 값, `AKIA`·`ASIA`·`sk-` 형태의 키를 가린다 ([ADR 0004](adr/0004-model-authentication.md) 결정 8). logback을 거치지 않고 stderr에 쓰는 출력(`System.out`, `System.err`)도 줄마다 같은 계층을 지난다. 잡히지 않은 예외는 logback으로 남긴다 |
-| 종료        | stdin EOF나 부모 프로세스 종료를 감지하면 Spring 컨텍스트를 닫고 끝낸다. 이때 살아 있는 자손 프로세스를 모두 죽인다. 5초 안에 끝나지 않으면 남은 자손을 죽이고 강제로 끝낸다. 런타임이 코드를 실행하지 못하고 죽을 때의 정리는 아래에 있다                                                                                                                     |
-| 개발 실행   | 런타임 빌드가 `runtime/build/dev-runtime.json`(`{"java": JDK 25의 java 경로, "jar": boot jar 경로}`)을 쓴다. 셸은 개발 중에 이 파일을 읽는다. env `AGENTS_ROOM_RUNTIME_COMMAND`(JSON 배열 argv)가 있으면 그쪽이 우선한다(테스트용)                                                                                                                             |
+| 종료        | stdin EOF나 부모 프로세스 종료를 감지하면 Spring 컨텍스트를 닫고 끝낸다. 이때 살아 있는 자손 프로세스를 모두 죽인다. 5초 안에 끝나지 않으면 남은 자손을 죽이고 강제로 끝낸다. 셸이 살아 있으면 셸이 3초 뒤에 런타임 프로세스 트리를 먼저 끝내므로, 이 5초는 셸이 먼저 죽었을 때의 상한이다. 런타임이 코드를 실행하지 못하고 죽을 때의 정리는 아래에 있다       |
+| 개발 실행   | 런타임 빌드가 `runtime/build/dev-runtime.json`(`{"java": JDK 25의 java 경로, "jar": boot jar 경로}`)을 쓴다. 셸은 개발 중에 이 파일을 읽는다. env `AGENTS_ROOM_RUNTIME_COMMAND`(JSON 배열 argv)가 있으면 그쪽이 우선한다(테스트용, 패키징하지 않은 실행에서만)                                                                                                 |
 
 - 자식 프로세스 정리를 보장하는 범위는 OS마다 다르다.
   - Windows: 런타임은 시작할 때 자기만 가진 job object(`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)에 들어간다. 그 뒤에 생기는 자식은 누가 띄우든(ACP SDK 포함) 이 job 안에서 생기고, 그 자손도 그렇다. 런타임이 어떻게 끝나든 Windows가 이 job의 프로세스를 모두 죽인다. 부모가 먼저 끝난 손자도 포함된다.
-  - 이것이 필요한 이유: Electron 셸은 런타임을 libuv의 job에 넣는다. 셸이 `/T` 없이 죽으면(작업 관리자의 작업 끝내기 등) Windows가 런타임을 바로 죽이므로, 런타임의 감시 코드는 돌지 못한다. libuv의 job은 자식이 조용히 빠져나가게 두므로, 런타임 자신의 job이 없으면 런타임의 자식이 남는다.
+  - 이것이 필요한 이유: 런타임은 정리 코드를 돌리지 못하고 끝날 수 있다. 강제로 끝날 때(작업 관리자의 작업 끝내기, 셸이 종료 3초 뒤에 쓰는 `taskkill /T /F`)가 그렇다. `taskkill /T`는 부모 관계를 따라가므로 부모가 먼저 끝난 손자를 놓친다.
+  - 셸은 런타임을 detached로 띄워 libuv의 kill-on-close job 밖에 둔다(이유는 [셸과 런타임의 약속](#셸과-런타임의-약속) 2). libuv의 job은 자식이 조용히 빠져나가게 두므로, 그 job으로는 런타임의 자식을 묶을 수도 없다.
   - 그 밖의 OS: 정상 종료할 때만 정리하고, 런타임의 프로세스 트리에 아직 있는 자손만 죽인다. 부모가 먼저 끝난 손자와, 런타임이 `SIGKILL`로 죽었을 때의 자식은 남을 수 있다 (macOS·Linux 배포는 SCRUM-64).
 - 셸은 Gradle을 직접 부르지 않는다. Gradle 출력이 stdout에 섞이면 준비 줄을 읽을 수 없다.
-- 렌더러의 Origin은 `app://bundle`이다. 렌더러는 preload의 `window.agentsRoom.getRuntimeEndpoint()`로 `{url, token}`을 받는다.
+- 렌더러 쪽(출처 `app://bundle`, preload의 `window.agentsRoom.getRuntimeEndpoint()`가 주는 `{url, token}`)은 [데스크톱 셸](#데스크톱-셸)에 있다.
 
 ## 로컬 런타임 코드 구성
 
@@ -232,8 +264,8 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 ### 프로젝트 열기
 
-1. 사용자가 프로젝트 열기를 요청하면 셸이 OS 폴더 선택기를 연다. 취소하면 아무것도 바뀌지 않는다 (SCRUM-18, 31).
-2. 고른 경로가 `openProject`로 런타임에 전달된다 (전달 경로는 ADR 0001).
+1. 사용자가 프로젝트 열기를 요청하면 렌더러가 preload의 `pickProjectFolder()`를 부르고, 셸이 OS 폴더 선택기를 연다. 취소하면 `null`이 돌아오고 아무것도 바뀌지 않는다 (SCRUM-18, 31).
+2. 렌더러가 고른 경로를 WebSocket으로 `openProject`에 담아 런타임에 보낸다. 셸과 런타임 사이의 stdio로는 경로를 보내지 않는다 (ADR 0001).
 3. Project/Workspace service가 경로를 검증하고, `projectId`를 발급하고, 최근 목록을 갱신한다. 실패하면 `projectOpenFailed {code}`를 보내고 다시 고르게 한다.
 4. 렌더러에 `projectOpened`(프로젝트 이름, 경로, 최소 파일 트리)를 보내고, 이어서 그 프로젝트의 에이전트 목록(`agentsUpdated`)을 보낸다.
 
@@ -274,8 +306,8 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 ### 앱 종료
 
 1. 셸이 닫힌다. 실행 중인 에이전트가 있을 때의 경고는 [ux.md](ux.md#화면-구성)에 있다.
-2. 런타임이 stdin EOF나 부모 프로세스 종료를 감지한다 (방식은 ADR 0001). 셸이 비정상으로 끝나도 같다.
-3. 런타임이 모든 어댑터 프로세스 트리를 정리하고 끝난다. OS별 보장 범위는 [셸과 런타임의 연결](#셸과-런타임의-연결)에 있다.
+2. 셸이 런타임의 stdin을 닫는다. 런타임이 stdin EOF나 부모 프로세스 종료를 감지한다 (방식은 ADR 0001). 셸이 비정상으로 끝나도 같다. 셸이 런타임을 detached로 띄우므로 OS가 런타임을 셸과 함께 끝내지 않는다.
+3. 런타임이 모든 어댑터 프로세스 트리를 정리하고 끝난다. 3초 안에 끝나지 않으면 셸이 런타임 프로세스 트리를 강제로 끝낸다. OS별 보장 범위는 [셸과 런타임의 연결](#셸과-런타임의-연결)에 있다.
 
 ## 현재 코드와 목표 구조
 
@@ -285,7 +317,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 - 고쳐 쓴다: 렌더러의 메시지 처리(`useExtensionMessages.ts`, `toolUtils.ts`)와 전송 분기(`transport/index.ts`), 계약(`core/asyncapi.yaml`, ADR 0005), e2e. 계약에는 agents-room 프레임과 명령을 상속 프레임 옆에 더했다. 상속 프레임은 `x-legacy: true`이고, `server/`와 `adapters/vscode/`를 지울 때 함께 지운다.
 - 개념만 옮긴다: `server/`(Node/Fastify)는 Java로 다시 구현하고 상태 저장소, 연결 시 스냅샷, 원자적 저장 같은 구조만 가져온다 ([ADR 0002](adr/0002-java-spring-runtime.md)).
 - 버린다: Claude hooks와 JSONL 처리(`server/src/providers/hook/**`, `fileWatcher.ts`, `transcriptParser.ts`), `adapters/vscode/**`.
-- 새로 만든다: Detail Panel, 권한 대화상자, 에이전트 설정 화면([ux.md](ux.md#화면-구성)), 데스크톱 셸, Java 런타임.
+- 새로 만든다: Detail Panel, 권한 대화상자, 에이전트 설정 화면([ux.md](ux.md#화면-구성)), 데스크톱 셸(뼈대는 `desktop/`에 있다), Java 런타임(골격은 `runtime/`에 있다).
 
 ## 관련 문서
 

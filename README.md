@@ -9,7 +9,7 @@ agents-room은 코딩 에이전트를 픽셀 캐릭터로 보여주는 게임형
 - SCRUM Sprint 0(2026-10-18 – 2026-10-25)을 진행하고 있다. 목표는 "데스크톱 IDE에서 Codex 에이전트 하나를 실행하고 ACP 이벤트를 수신하여 픽셀 캐릭터와 상세 패널에 표시할 수 있다"이다. 핵심 스토리는 SCRUM-23, 19, 27이고, 전체 목록은 Jira에서 본다.
 - 다음은 SCRUM Sprint 1(계획)이다.
 - 배포 서비스의 모델은 Amazon Bedrock으로 제공한다. MVP에서는 Codex를 ChatGPT 로그인으로, Claude Code를 Bedrock mock 서버(SCRUM-67)로 확인한다. Claude 계정 로그인은 쓰지 않는다 → [ADR 0004](docs/adr/0004-model-authentication.md).
-- 코드는 아직 대부분 pixel-agents 기준선(`d1e007a`) 그대로다: VS Code 확장과 `npx pixel-agents` standalone CLI이며, Claude Code hooks와 JSONL로 동작한다. Java 로컬 런타임은 골격(`runtime/`)만 있고, 데스크톱 셸과 ACP 연동은 아직 없다.
+- 코드는 대부분 pixel-agents 기준선(`d1e007a`) 그대로다: VS Code 확장과 `npx pixel-agents` standalone CLI이며, Claude Code hooks와 JSONL로 동작한다. 데스크톱 셸 뼈대(`desktop/`)와 Java 런타임 골격(`runtime/`)이 들어갔고, ACP 연동은 아직 없다.
 - `package.json`의 이름은 아직 업스트림 그대로다. 상속한 배포 워크플로는 지웠고, 이 포크에서는 npm·Marketplace로 배포(publish)하지 않는다 → [남은 업스트림 흔적](docs/upstream.md#남은-업스트림-흔적).
 - 처음이면 [구성도](docs/architecture.md#구성도) → [ADR 0003](docs/adr/0003-acp-integration.md) → [상태 어휘](docs/ux.md#상태-어휘) 순서로 읽는다. ADR 0001–0005는 모두 합의되었다. 남은 결정은 각 ADR의 "열린 질문"에 있다.
 
@@ -45,15 +45,16 @@ Jira 키는 PR 본문에 적는다.
 아래 명령은 상속한 pixel-agents 코드를 빌드하고 실행한다.
 
 ```bash
-# Node 22 (.nvmrc). package.json engines: node >= 20
-npm install        # 루트와 server, webview-ui 워크스페이스
+# Node 22 (.nvmrc). package.json engines: node >= 22.12
+npm install        # 루트와 server, webview-ui, desktop 워크스페이스
 npm run build      # AsyncAPI 생성 → 타입 검사 → lint → esbuild → Vite (dist/)
-npm test           # webview·server Vitest와 패키지 계약 테스트
+npm test           # webview·server·desktop Vitest와 패키지 계약 테스트
 ```
 
 - VS Code 확장 디버그: `.env.example`을 `.env`로 복사한 뒤 F5 ("Run Extension"). `launch.json`이 `.env`를 읽는데 저장소에는 `.env`가 없다.
 - standalone: `node dist/cli.js`. 포트를 주지 않으면 OS가 임시 포트를 고른다. `--port 3100`, `--host 127.0.0.1`로 지정할 수 있다. 출력된 URL에는 토큰이 들어 있으므로 공유하지 않는다.
 - 렌더러만 개발: `cd webview-ui && npm run dev`. Vite dev 서버와 browser mock으로 백엔드 없이 UI를 띄운다.
+- 데스크톱 셸: `npm run desktop:start`(렌더러와 셸을 빌드해 `app://bundle`로 띄운다), `npm run desktop:dev`(Vite dev 서버와 Electron). 로컬 런타임은 `runtime/build/dev-runtime.json`이나 환경변수 `AGENTS_ROOM_RUNTIME_COMMAND`(JSON argv)로 찾는다. 처음에는 `npx install-electron --no`로 Electron 실행 파일을 받는다. 셸 e2e는 `npm run desktop:build` 뒤 `npm run e2e:desktop`이다 → [architecture.md](docs/architecture.md#데스크톱-셸).
 - e2e: 빌드한 뒤 `npm run e2e`. 첫 실행 때 VS Code를 내려받는다. standalone 테스트에는 Playwright Chromium이 필요하다 (`npx playwright install chromium`).
 - 로컬 런타임: `npm install` 뒤 `npm run runtime:build`(빌드와 테스트)나 `npm run runtime:test`. JDK 17 이상이 필요하고, 빌드가 node로 계약 바인딩을 만든다 → [로컬 런타임 코드 구성](docs/architecture.md#로컬-런타임-코드-구성).
 - `npm run import-tileset`은 쓰지 않는다 (스크립트 파일이 없다).

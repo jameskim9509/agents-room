@@ -33,3 +33,18 @@ export const MAX_PET_PNG_SIZE = 512 * 1024; // 512 KB cap per pet PNG
 export const CARPET_TILE_SIZE = 16;
 export const CARPET_GRID_COLS = 4;
 export const CARPET_MARCHING_SQUARES_COUNT = 16;
+
+// ── Pre-decoded sprite JSON (served by the Vite dev middleware, written by the build) ──
+/**
+ * Paths under `assets/` where the renderer finds sprites already decoded to
+ * SpriteData. The desktop renderer loads its own assets from these files, so
+ * the office renders under `app://bundle` without any runtime message.
+ */
+export const DECODED_ASSET_PATHS = {
+  characters: 'decoded/characters.json',
+  floors: 'decoded/floors.json',
+  walls: 'decoded/walls.json',
+  carpets: 'decoded/carpets.json',
+  furniture: 'decoded/furniture.json',
+  pets: 'decoded/pets.json',
+} as const;

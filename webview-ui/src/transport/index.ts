@@ -1,10 +1,49 @@
 import type { ServerMessage } from '../../../core/src/messages.js';
+import { type AgentsRoomBridge, getDesktopBridge } from '../desktopBridge.js';
 import { isBrowserRuntime } from '../runtime.js';
 import { PostMessageTransport } from './postMessageTransport.js';
 import type { MessageTransport } from './types.js';
 import { WebSocketTransport } from './webSocketTransport.js';
 
+/** Desktop only: hands renderer-local frames to the same handlers as wire frames. */
+let localDelivery: ((message: ServerMessage) => void) | null = null;
+
+/**
+ * Desktop shell (ADR 0001 decision 4): the renderer talks to the local runtime
+ * directly over its own WebSocket, so agent events never pass through the
+ * Electron main process (SCRUM-22). The preload only hands over the endpoint,
+ * and only after the runtime's ready line, so it is resolved asynchronously,
+ * and again before every reconnect: a restarted runtime has a new port and
+ * token. The token rides the `?token=` query, as the runtime's `/ws` gate
+ * requires it on the handshake itself.
+ *
+ * TODO(contract): frames on this socket are still typed as the upstream
+ * ServerMessage/ClientMessage unions, and the renderer still sends the
+ * upstream `webviewReady` on connect. When the renderer↔runtime contract
+ * (core/asyncapi.yaml, feat/contract-sprint0) lands, type this transport with
+ * the generated frames; the runtime sends its snapshot on every connect
+ * (critique D4), which the inbound buffer already holds for the first subscriber.
+ */
+function createDesktopTransport(bridge: AgentsRoomBridge): WebSocketTransport {
+  const ws = new WebSocketTransport(async () => {
+    const { url, token } = await bridge.getRuntimeEndpoint();
+    const wsUrl = new URL(url);
+    wsUrl.searchParams.set('token', token);
+    return wsUrl.toString();
+  });
+  ws.connect();
+  return ws;
+}
+
 function createTransport(): MessageTransport {
+  // Before the browser fallback: the desktop page is not served by the runtime,
+  // so the browser branch's `location.host` URL would be wrong (app://bundle).
+  const bridge = getDesktopBridge();
+  if (bridge) {
+    const ws = createDesktopTransport(bridge);
+    localDelivery = (message) => ws.deliver(message);
+    return ws;
+  }
   if (!isBrowserRuntime) {
     return new PostMessageTransport();
   }
@@ -43,4 +82,15 @@ function createTransport(): MessageTransport {
 
 /** Singleton transport instance. Import this everywhere instead of vscodeApi. */
 export const transport: MessageTransport = createTransport();
+
+/**
+ * Deliver a frame that originates in the renderer itself (the desktop
+ * renderer's bundled assets, localAssets.ts) to the transport's subscribers.
+ * Held until the first subscriber, like a socket frame. No-op outside the
+ * desktop shell, where the extension or the server sends every asset.
+ */
+export function deliverLocal(message: ServerMessage): void {
+  localDelivery?.(message);
+}
+
 export type { MessageTransport } from './types.js';

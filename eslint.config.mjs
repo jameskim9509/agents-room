@@ -5,8 +5,9 @@ import pixelAgentsPlugin from './eslint-rules/pixel-agents-rules.mjs';
 
 export default [
   {
-    // Gradle output of the Java runtime (test reports ship their own JS).
-    ignores: ['runtime/build/**', 'runtime/.gradle/**'],
+    // Gradle output of the Java runtime (test reports ship their own JS) and
+    // the bundled output of desktop/esbuild.mjs.
+    ignores: ['runtime/build/**', 'runtime/.gradle/**', 'desktop/dist/**'],
   },
   {
     files: ['**/*.ts'],
@@ -42,7 +43,7 @@ export default [
     },
   },
   {
-    files: ['adapters/vscode/constants.ts'],
+    files: ['adapters/vscode/constants.ts', 'desktop/src/constants.ts'],
     rules: {
       'pixel-agents/no-inline-colors': 'off',
     },

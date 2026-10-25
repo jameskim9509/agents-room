@@ -34,13 +34,24 @@ Jira 제약:
 1. 데스크톱 셸(Desktop shell)은 Electron으로 만든다.
 2. 패키징과 업데이트는 electron-builder NSIS(사용자별 설치)와 electron-updater로 한다. electron-updater는 Squirrel.Windows를 지원하지 않으므로 Squirrel 계열은 쓰지 않는다 ([electron-updater](https://www.electron.build/docs/features/auto-update/)).
 3. main 프로세스가 앱에 동봉한 로컬 런타임을 `child_process.spawn`으로 띄운다. 런타임은 jlink로 만든 JRE와 함께 싣는다 (ADR 0002 결정 9). 에이전트 프로세스는 런타임이 띄운다.
-4. 데이터 경로: 런타임은 127.0.0.1의 임시 포트에 WebSocket을 연다. 렌더러는 기존 `WebSocketTransport`로 직접 접속하므로 이벤트가 main 프로세스를 거치지 않는다 (SCRUM-22, [Electron 성능 지침](https://www.electronjs.org/docs/latest/tutorial/performance)). Jira의 "IPC/Event"(SCRUM-8, 18, 22)는 프로세스 사이 통신 전반으로 읽으며, 이 WebSocket도 여기에 든다. 셸은 preload로 URL과 토큰만 넘긴다. 런타임은 실행할 때마다 새로 만든 랜덤 토큰을 연결 자체에 요구하고 Origin도 검사한다. 업스트림보다 강화한 것이다.
+4. 데이터 경로: 런타임은 127.0.0.1의 임시 포트에 WebSocket(`ws://127.0.0.1:<port>/ws`)을 연다. 렌더러는 기존 `WebSocketTransport`로 직접 접속하므로 이벤트가 main 프로세스를 거치지 않는다 (SCRUM-22, [Electron 성능 지침](https://www.electronjs.org/docs/latest/tutorial/performance)). Jira의 "IPC/Event"(SCRUM-8, 18, 22)는 프로세스 사이 통신 전반으로 읽으며, 이 WebSocket도 여기에 든다. 셸은 preload로 URL과 토큰만 넘긴다. 런타임은 실행할 때마다 새로 만든 랜덤 토큰을 연결 자체에 요구하고 Origin도 검사한다. 업스트림보다 강화한 것이다.
+   - 토큰은 셸이 실행마다 만드는 32바이트 난수(base64url)다. 환경변수 `AGENTS_ROOM_TOKEN`으로 넘기고, argv에는 넣지 않는다.
+   - 렌더러는 토큰을 `?token=` 쿼리로 보낸다. 토큰이 없거나 틀리면 런타임은 업그레이드 전에 HTTP 401로 답한다(상수 시간 비교). Origin 헤더가 있고 허용 목록 밖이면 403이다.
+   - 허용 목록은 셸이 `AGENTS_ROOM_ALLOWED_ORIGINS`(쉼표 구분)로 넘긴다. 배포판은 `app://bundle`이고, `desktop:dev`에서만 `http://localhost:5173`이 붙는다.
+   - 토큰은 로그에 남기지 않는다. 런타임은 접근 로그를 끄고 `token=`을 가린다. 셸도 `runtime.log`에 쓸 때 토큰을 `***`로 가린다.
 5. 제어 경로: 셸과 런타임은 stdio로 통한다. 런타임은 준비되면 포트를 담은 준비 줄을 stdout에 한 줄 쓴다. stdin EOF나 부모 종료(`ProcessHandle.parent().onExit()`)를 감지하면 어댑터 프로세스 트리를 정리하고 스스로 끝낸다. 셸은 종료할 때 런타임 프로세스 트리를 정리한다.
+   - 실행: `<java> -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -jar <jar>`. stdin, stdout, stderr는 모두 pipe이고, 셸은 stdin을 런타임이 사는 동안 열어 둔다. 셸은 런타임을 모든 OS에서 detached로 띄운다. Windows에서는 Node(libuv)가 detached가 아닌 자식을 kill-on-close job object에 넣는다. 그러면 셸이 죽을 때 OS가 런타임을 바로 끝내서, 런타임이 어댑터를 정리하지 못한다(Windows에서는 런타임 자신의 job object가 어댑터를 강제로 끝낼 뿐이다, [architecture.md](../architecture.md#셸과-런타임의-연결)). detached면 런타임은 stdin EOF를 받고 어댑터를 정리할 시간을 갖는다. POSIX에서는 런타임이 자기 프로세스 그룹을 이끈다. 환경변수 `AGENTS_ROOM_DATA_DIR`은 Electron `userData`의 절대 경로이며, 런타임은 `<dir>/runtime/` 아래에만 파일을 둔다.
+   - 개발 중에는 런타임 Gradle 빌드가 쓰는 `runtime/build/dev-runtime.json`(`{"java": "<JDK 25 java>", "jar": "<boot jar>"}`)을 읽는다. 환경변수 `AGENTS_ROOM_RUNTIME_COMMAND`(JSON argv)가 있으면 그것이 이긴다 (테스트용). 설치판의 경로는 패키징 때 정한다.
+   - 셸의 테스트·개발용 환경변수(`AGENTS_ROOM_RUNTIME_COMMAND`, `AGENTS_ROOM_READY_TIMEOUT_MS`, `AGENTS_ROOM_USER_DATA_DIR`, `AGENTS_ROOM_RENDERER_URL`)는 패키징하지 않은 실행(`app.isPackaged`가 false)에서만 읽는다. 설치판은 모두 무시한다. 그렇지 않으면 사용자 환경변수를 바꿀 수 있는 프로그램이 설치판에 아무 명령이나 띄우게 하고 토큰까지 넘겨받는다. 설치판 e2e(SCRUM-36)에 이 값이 필요하면 그때 다시 정한다.
+   - 준비 줄: `AGENTS_ROOM_READY {"port":<int>}` + `\n` (UTF-8). stdout에는 이 한 줄만 쓰고, 배너와 로그는 모두 stderr로 보낸다. 읽는 쪽은 끝의 `\r`을 지운다.
+   - 셸은 준비 줄을 30초 기다린다. 준비 줄이 온 뒤에만 접속 정보를 렌더러에 준다. 그 밖의 stdout과 stderr는 `<userData>/logs/runtime.log`에 쓴다. 그 파일을 열 수 없으면 `runtime-<pid>.log`에 쓴다.
+   - 시작에 실패하거나(실행 명령 없음, 실행 실패, 시간 초과, 준비 전 종료) 런타임이 예상하지 않게 끝나면 네이티브 대화상자를 띄운다. 로그 경로를 보여주고 "다시 시작"과 "종료"를 고르게 한다. 자동 재시작은 하지 않는다.
+   - 앱을 끌 때는 stdin을 닫고 3초 기다린 뒤, 런타임이 살아 있으면 프로세스 트리를 강제로 끝낸다 (Windows `taskkill /pid N /T /F`, 그 밖은 프로세스 그룹).
 6. 보안 기준선은 [Electron 보안 체크리스트](https://www.electronjs.org/docs/latest/tutorial/security)를 따른다.
-   - `contextIsolation`과 `sandbox` 기본값을 유지한다.
-   - preload의 `contextBridge`로 좁은 API만 노출한다: 폴더 선택 대화상자(SCRUM-18), 런타임 접속 정보, 창 생명주기. 원시 `ipcRenderer`는 노출하지 않고, IPC sender를 검증한다.
-   - CSP는 `connect-src ws://127.0.0.1:*`로 둔다. `file://` 대신 custom protocol을 쓴다.
-   - 내비게이션과 새 창을 제한하고, fuses를 점검한다. 단, 어댑터를 Electron 실행 파일로 돌리므로 `runAsNode` fuse는 켜 둔다 ([ADR 0003](0003-acp-integration.md) 결정 12).
+   - `contextIsolation`과 `sandbox`를 켜고 `nodeIntegration`을 끈다. 단일 인스턴스로 실행한다 (`app.requestSingleInstanceLock`).
+   - preload의 `contextBridge`로 좁은 API만 노출한다: `window.agentsRoom.getRuntimeEndpoint(): Promise<{url, token}>`(런타임 접속 정보)와 `window.agentsRoom.pickProjectFolder(): Promise<string | null>`(폴더 선택 대화상자, SCRUM-18, 취소하면 `null`). 창 생명주기 API는 필요해질 때 더한다. 원시 `ipcRenderer`는 노출하지 않는다. IPC sender는 메인 창의 최상위 frame이고 origin이 렌더러 출처일 때만 받는다.
+   - `file://` 대신 custom protocol을 쓴다. 렌더러 출처는 `app://bundle`이고, 스킴은 `standard`, `secure`, `supportFetchAPI` 권한으로 등록한다. 응답 헤더 CSP는 오류 응답(400, 404)을 포함한 모든 응답에 붙고, 값은 `default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`이다. `connect-src 'self'`는 렌더러가 번들한 에셋을 `fetch`하는 데 쓴다.
+   - 새 창, webview, 렌더러 출처 밖으로의 내비게이션과 리디렉션을 막는다. 권한 요청은 모두 거절하고, 렌더러 출처의 loopback 접근만 예외로 둔다. fuses를 점검한다. 단, 어댑터를 Electron 실행 파일로 돌리므로 `runAsNode` fuse는 켜 둔다 ([ADR 0003](0003-acp-integration.md) 결정 12).
 7. e2e는 Playwright `_electron.launch`로 한다. 기존 `e2e/helpers/launch.ts`의 e2e 실행 코드를 옮겨 쓴다 ([Playwright Electron](https://playwright.dev/docs/api/class-electron)). MVP의 CI는 e2e를 `windows-latest`에서만 돌린다 (SCRUM-36). 상속한 e2e 행렬(VS Code와 standalone)은 `ci.yml`에서 지웠다. Windows 데스크톱 e2e job은 데스크톱 셸 PR과 함께 들어오고, macOS·Linux는 SCRUM-64 때 더한다.
 8. SCRUM-17의 MVP 범위 (SCRUM-68): 앱 버전을 표시하고 electron-updater로 새 버전이 있는지 확인한다. 사용자가 업데이트를 고르면 내려받은 파일을 sha512로 검증한 뒤 설치하고, 다운로드나 검증에 실패하면 설치하지 않고 기존 버전을 그대로 쓴다. CI는 Windows NSIS 설치 파일과 업데이트 정보 파일(`latest.yml`)을 만들어 이 저장소의 GitHub Releases에 올리고, 앱은 electron-updater의 GitHub provider로 읽는다. 저장소는 public이어야 한다. private 저장소는 앱에 GitHub 토큰을 넣어야 하므로 쓰지 않는다 ([auto-update](https://www.electron.build/docs/features/auto-update/)). 코드 서명, 서명 검증, 설치 도중 실패의 복구는 post-MVP다 (SCRUM-63). 서명하지 않은 설치 파일에는 Windows SmartScreen 경고가 뜰 수 있다.
 
@@ -71,7 +82,7 @@ Jira 제약:
   - Electron은 8주마다 메이저 버전이 나오고 최신 3개 메이저만 지원한다 ([Electron 일정](https://www.electronjs.org/docs/latest/tutorial/electron-timelines)). 이를 따라가는 업그레이드 비용이 든다.
   - Tauri의 플러그인 권한 모델 같은 장치가 없으므로 보안 체크리스트(결정 6)를 직접 챙겨야 한다.
   - Electron과 Tauri 모두 자동 rollback이 없다. SCRUM-17의 기본 복구 전략과 SCRUM-63의 실패 복구는 직접 설계해야 한다.
-- 후속 작업: `createTransport()`에 데스크톱 분기 추가, preload API 정의, 업데이트 확인과 CI 릴리스 (SCRUM-68), 첫 Release 전에 `publish-extension.yml` 삭제를 GitHub의 main에 반영 ([upstream.md 규칙](../upstream.md#남은-업스트림-흔적)), 서명 방식 결정 (post-MVP).
+- 후속 작업: 업데이트 확인과 CI 릴리스 (SCRUM-68), 설치판에서 런타임을 찾는 경로와 fuses 설정 (SCRUM-36), 첫 Release 전에 `publish-extension.yml` 삭제를 GitHub의 main에 반영 ([upstream.md 규칙](../upstream.md#남은-업스트림-흔적)), 서명 방식 결정 (post-MVP). `createTransport()`의 데스크톱 분기와 preload API는 `desktop/`에 들어갔다 ([architecture.md](../architecture.md#데스크톱-셸)).
 - 재검토 조건: Tauri의 CEF runtime이 stable이 될 때, 또는 Windows 전용으로 확정할 때. CEF runtime은 [v3 alpha](https://github.com/tauri-apps/tauri/releases)로 진행 중이고 (2026-10-20 기준), 성숙도는 확인하지 못했다 (미검증).
 
 ### 열린 질문
