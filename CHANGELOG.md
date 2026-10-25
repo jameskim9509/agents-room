@@ -26,6 +26,7 @@ agents-room의 변경 기록이다. 형식은 [Keep a Changelog](https://keepach
 - Claude Code 연동 확인 (2026-10-23): claude-agent-acp 0.94.0을 Claude 로그인 없는 격리 환경에서 Bedrock mock에 붙여 `session/new`부터 권한 요청, Write 도구 실행까지 통과함을 확인했다 (ADR 0003 맥락, ADR 0004 결정 10). Anthropic 약관 원문을 다시 읽고 ADR 0003의 열린 질문을 두 가지(인증 방식 제한, Bedrock 비용 주체)로 좁혔다. 실행기 이름은 어댑터의 `agentInfo.title`("Claude Agent")을 쓴다 (ux.md, 제안). 업데이트 파일은 GitHub Releases에 올린다 (ADR 0001 결정 8, SCRUM-68).
 - 팀 결정 반영 (2026-10-24): Bedrock mock은 컨테이너가 아니라 `node`로 실행하는 Node.js 스크립트이며 Docker는 쓰지 않는다 (ADR 0004 결정 10, SCRUM-66·67, README, architecture.md). MVP의 e2e CI는 Windows에서만 돌린다 (ADR 0001 결정 7). SCRUM-67 인수 조건에 모델 목록 요청과 임의의 모델 ID 처리를 더했다. 이 포크에서 GitHub Actions를 켰다. 상속한 배포 워크플로를 지운 삭제가 main에 올라간 뒤에만 Release를 발행한다는 규칙을 upstream.md에 적었다 (SCRUM-68).
 - Sprint 0에 맞춰 `.github/workflows/ci.yml`을 줄였다. npm 패키지 검사와 Node 20 job, 상속한 e2e 행렬(VS Code와 standalone, 3 OS × 3 shard), Vercel 미리보기 배포와 Allure 결과 업로드를 지웠다. 상속한 e2e는 이제 로컬 `npm run e2e`로만 돈다. AsyncAPI 명세 검증, `messages.ts` drift check, `e2e/README.md` 테스트 목록 drift check는 이제 실패하면 CI 실행(`CI` job과 `Required Checks`)이 실패한다. main에는 branch protection이 없어 병합은 막히지 않는다. Markdown만 바꾼 PR도 `e2e/README.md`를 바꾸면 CI를 돌린다. Windows 데스크톱 e2e job은 데스크톱 셸 PR에서 더한다 (ADR 0001 결정 7, SCRUM-36·64, upstream.md).
+- 저장소를 GitHub fork `jameskim9509/pixel-agents`에서 독립 저장소 [`jameskim9509/agents-room`](https://github.com/jameskim9509/agents-room)(public)으로 옮겼다. fork에서는 GitHub Actions가 꺼져 있어 CI가 돌지 않았기 때문이다. 업스트림 이력은 그대로 담았고, `upstream` remote로 계속 따라간다 ([upstream.md](docs/upstream.md#포크-기준)).
 
 ### Removed
 
