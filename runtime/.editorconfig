@@ -1,0 +1,6 @@
+# Inherits the root .editorconfig. Java and Gradle Kotlin DSL use 4 spaces.
+[*.{java,kts}]
+indent_size = 4
+
+[*.bat]
+end_of_line = crlf

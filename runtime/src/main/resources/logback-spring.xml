@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  All log output goes to stderr: stdout is the shell control path and carries only the ready line.
+  Every line, stack traces included, passes through the masking layer (ADR 0004 decision 8): %mask
+  here, and RuntimeApplication masks stderr itself for output that bypasses logback (System.out/err,
+  the JVM's uncaught-exception traces).
+  There is no access log (RuntimeApplication keeps Reactor Netty's off).
+-->
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+  <conversionRule conversionWord="mask" class="agentsroom.runtime.logging.MaskingConverter"/>
+  <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+    <target>System.err</target>
+    <encoder>
+      <pattern>%mask(${CONSOLE_LOG_PATTERN})</pattern>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+  <root level="INFO">
+    <appender-ref ref="STDERR"/>
+  </root>
+</configuration>

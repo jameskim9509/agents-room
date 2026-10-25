@@ -1,0 +1,4 @@
+# The root .gitattributes forces LF. The Windows wrapper script needs CRLF.
+/gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary

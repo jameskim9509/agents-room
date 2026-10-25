@@ -5,6 +5,10 @@ import pixelAgentsPlugin from './eslint-rules/pixel-agents-rules.mjs';
 
 export default [
   {
+    // Gradle output of the Java runtime (test reports ship their own JS).
+    ignores: ['runtime/build/**', 'runtime/.gradle/**'],
+  },
+  {
     files: ['**/*.ts'],
   },
   {
