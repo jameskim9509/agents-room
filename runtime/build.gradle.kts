@@ -21,10 +21,47 @@ repositories {
     mavenCentral()
 }
 
-// TODO(contract): once core/asyncapi.yaml has Java bindings (ADR 0005), generate them here with
-// `npm run asyncapi:generate:java -- --out <build dir>` in a task and add that directory with
-// sourceSets.main { java.srcDir(task) }. The gateway's temporary frame types then go away.
+// The Java bindings of core/asyncapi.yaml (ADR 0005 decision 11) are generated at build time and never
+// committed. The task runs the command behind `npm run asyncapi:generate:java` itself, as
+// `node --import tsx scripts/generate-messages.ts --java ...` from the repo root: without npm and
+// cmd.exe in between, the argv and its quoting are the same on Windows and Linux. It needs node on the
+// PATH and `npm ci` at the repo root.
+val repoRoot = layout.projectDirectory.dir("..")
+val contractPackage = "agentsroom.contract"
+
+val generateContractBindings = tasks.register<Exec>("generateContractBindings") {
+    group = "build"
+    description = "Generates the Java bindings of core/asyncapi.yaml into build/generated/sources/contract."
+    val outputDir = layout.buildDirectory.dir("generated/sources/contract")
+    val tsx = repoRoot.dir("node_modules/tsx").asFile
+    inputs.file(repoRoot.file("core/asyncapi.yaml")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(repoRoot.file("scripts/generate-messages.ts")).withPathSensitivity(PathSensitivity.RELATIVE)
+    // The locked Modelina version shapes the output too.
+    inputs.file(repoRoot.file("package-lock.json")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property("package", contractPackage)
+    outputs.dir(outputDir)
+    workingDir(repoRoot)
+    commandLine(
+        "node", "--import", "tsx", "scripts/generate-messages.ts", "--java",
+        "--out", outputDir.get().asFile.absolutePath, "--package", contractPackage,
+    )
+    doFirst {
+        if (!tsx.isDirectory) {
+            throw GradleException("node_modules/tsx is missing: run `npm ci` at the repo root first.")
+        }
+    }
+}
+
+// The generated classes compile in their own source set, so that the handwritten code keeps every lint
+// warning an error while Modelina's style (redundant casts, a doc comment after the annotations) does not
+// fail the build.
+val contract = sourceSets.create("contract") {
+    java.srcDir(generateContractBindings)
+}
+
 dependencies {
+    "contractImplementation"("com.fasterxml.jackson.core:jackson-annotations")
+    implementation(contract.output)
     implementation("org.springframework.boot:spring-boot-starter-webflux")
     testImplementation("org.springframework.boot:spring-boot-starter-webflux-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -33,6 +70,10 @@ dependencies {
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
     options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror"))
+}
+
+tasks.named<JavaCompile>(contract.compileJavaTaskName) {
+    options.compilerArgs.add("-Xlint:-cast,-dangling-doc-comments")
 }
 
 // A stable file name: the desktop shell finds the jar through build/dev-runtime.json.
@@ -86,6 +127,13 @@ tasks.test {
     val jar = bootJarPath
     inputs.file(tasks.bootJar.flatMap { it.archiveFile })
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dagentsroom.runtime.bootJar=${jar.get()}") })
+    // The contract tests read core/fixtures and validate frames against core/asyncapi.yaml with
+    // scripts/check-contract-fixtures.mjs (node), the validator of `npm run contract:check`.
+    val root = repoRoot.asFile.absolutePath
+    inputs.dir(repoRoot.dir("core/fixtures")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(repoRoot.file("core/asyncapi.yaml")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(repoRoot.file("scripts/check-contract-fixtures.mjs")).withPathSensitivity(PathSensitivity.RELATIVE)
+    jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dagentsroom.repoRoot=$root") })
     testLogging {
         events("failed", "skipped")
         exceptionFormat = TestExceptionFormat.FULL

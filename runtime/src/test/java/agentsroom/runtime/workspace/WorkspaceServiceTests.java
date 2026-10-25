@@ -158,6 +158,43 @@ class WorkspaceServiceTests {
     }
 
     @Test
+    void anAgentWithAHueShiftTheContractForbidsMakesTheAgentsFileCorrupt() throws IOException {
+        Path folder = projectFolder("alpha");
+        OpenedProject first = open(newService(), folder.toString());
+        AgentConfig seeded = first.agents().getFirst();
+        Path agentsFile = agentsFile(first.project().projectId());
+        // Shifted hues are 45-315 degrees; 20 would make every agentsUpdated frame invalid.
+        String outOfRange = """
+                {"version":1,"agents":[{"agentId":"%s","projectId":"%s","name":"Codex","harnessId":"codex",\
+                "providerId":"openai","modelId":null,"authMethodId":"chat-gpt","palette":0,"hueShift":20}]}"""
+                .formatted(seeded.agentId(), seeded.projectId());
+        Files.writeString(agentsFile, outOfRange, StandardCharsets.UTF_8);
+
+        OpenedProject second = open(newService(), folder.toString());
+
+        assertThat(second.agents()).singleElement().satisfies(agent -> {
+            assertThat(agent.agentId()).isNotEqualTo(seeded.agentId());
+            assertThat(agent.hueShift()).isZero();
+        });
+        assertThat(siblingsOf(agentsFile)).anyMatch(name -> name.startsWith("agents.json.corrupt-"));
+    }
+
+    @Test
+    void knowsTheRecentProjectsAndTheCurrentProjectsAgents() throws IOException {
+        WorkspaceService service = newService();
+        assertThat(service.findAgent(UUID.randomUUID().toString())).as("no project open").isEmpty();
+        OpenedProject alpha = open(service, projectFolder("alpha").toString());
+        OpenedProject beta = open(service, projectFolder("beta").toString());
+
+        assertThat(service.isKnownProject(alpha.project().projectId())).isTrue();
+        assertThat(service.isKnownProject(beta.project().projectId())).isTrue();
+        assertThat(service.isKnownProject(UUID.randomUUID().toString())).isFalse();
+        assertThat(service.findAgent(beta.agents().getFirst().agentId())).contains(beta.agents().getFirst());
+        assertThat(service.findAgent(alpha.agents().getFirst().agentId())).as("agent of another project").isEmpty();
+        assertThat(service.findAgent(UUID.randomUUID().toString())).isEmpty();
+    }
+
+    @Test
     void aCorruptRecentProjectsFileIsKeptAsideAndTheListStartsEmpty() throws IOException {
         Path recentFile = RuntimeDataDirectory.at(dataDir).recentProjectsFile();
         Files.writeString(recentFile, "[garbage", StandardCharsets.UTF_8);

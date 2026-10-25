@@ -32,6 +32,16 @@
  * `discriminator`) are allowed beyond JSON Schema.
  *
  * Exits 1 on any failure.
+ *
+ * `--verdicts <dir>` runs the same two validators on messages that are not
+ * fixtures: every <dir>/server/*.json and <dir>/client/*.json. Instead of
+ * pass/fail it prints one JSON object on stdout, keyed `<side>/<file name>`:
+ * { valid, legacy, errors }. `legacy` marks an inherited (x-legacy) frame, which
+ * the schema accepts but the agents-room runtime neither sends nor accepts. The
+ * runtime's contract tests write the frames the runtime builds and command
+ * variants there (runtime/src/test/java/agentsroom/runtime/testsupport/
+ * ContractSchema.java). A file that is not JSON, any other entry, or a
+ * disagreement between the two validators exits 1.
  */
 
 import fs from 'node:fs';
@@ -67,14 +77,27 @@ const ANNOTATION_KEYWORDS = [
 ];
 
 async function main() {
+  const args = process.argv.slice(2);
+  const verdicts = args.length === 2 && args[0] === '--verdicts';
+  if (args.length > 0 && !verdicts) {
+    report(['usage: node scripts/check-contract-fixtures.mjs [--verdicts <dir>]']);
+  }
+  const schemas = await loadSchemas();
+  if (verdicts) printVerdicts(schemas, path.resolve(args[1]));
+  else checkFixtures(schemas);
+}
+
+async function loadSchemas() {
   const { document, diagnostics } = await new Parser().parse(fs.readFileSync(SPEC_PATH, 'utf8'));
   if (!document) {
     for (const d of diagnostics) console.error(`  ${d.message}`);
     console.error('[contract-check] core/asyncapi.yaml did not parse.');
     process.exit(1);
   }
-  const schemas = document.components().schemas();
+  return document.components().schemas();
+}
 
+function checkFixtures(schemas) {
   const failures = [];
   const expected = new Set();
   const covered = new Set();
@@ -93,15 +116,10 @@ async function main() {
   const fixtureFiles = (kind, side) => fixtures.get(`${kind}/${side}`) ?? [];
 
   for (const [side, unionName] of Object.entries(UNIONS)) {
-    const union = schemas.get(unionName).json();
-    const legacyTypes = new Set();
-    for (const variant of union.oneOf) {
-      const type = variant.properties.type.const;
-      if (variant['x-legacy'] === true) legacyTypes.add(type);
-      else expected.add(`${side}:${type}`);
+    const { types, legacyTypes, asWritten, byVariant } = compileUnion(schemas, unionName);
+    for (const type of types) {
+      if (!legacyTypes.has(type)) expected.add(`${side}:${type}`);
     }
-    const asWritten = compile(unionName, createAjv(false), union);
-    const byVariant = compile(unionName, createAjv(true), withAjvDiscriminators(union));
 
     for (const file of fixtureFiles('valid', side)) {
       validCount++;
@@ -166,6 +184,59 @@ async function main() {
     `[contract-check] ${validCount} valid fixtures accepted, ${invalidCount} invalid fixtures rejected as expected. ` +
       `Covered ${count('server:')} frames, ${count('client:')} commands, ${count('event:')} AgentEvent kinds.`,
   );
+}
+
+/**
+ * `--verdicts <dir>`: how each message in <dir>/server and <dir>/client
+ * validates, printed as JSON (see the header).
+ */
+function printVerdicts(schemas, dir) {
+  const failures = [];
+  const verdicts = {};
+  for (const [side, unionName] of Object.entries(UNIONS)) {
+    const sideDir = path.join(dir, side);
+    if (!fs.existsSync(sideDir)) continue;
+    const { legacyTypes, asWritten, byVariant } = compileUnion(schemas, unionName);
+    for (const entry of listDir(sideDir)) {
+      const file = path.join(sideDir, entry.name);
+      if (!entry.isFile() || !FIXTURE_NAME.test(entry.name)) {
+        failures.push(`${file}: unexpected entry; only *.json files are checked`);
+        continue;
+      }
+      const message = readJson(file, failures);
+      if (message === undefined) continue;
+      const valid = asWritten(message);
+      if (byVariant(message) !== valid) failures.push(`${file}: the two validators disagree`);
+      verdicts[`${side}/${entry.name}`] = {
+        valid,
+        legacy: legacyTypes.has(message?.type),
+        errors: valid ? [] : errorLines(byVariant.errors),
+      };
+    }
+  }
+  if (failures.length > 0) report(failures);
+  process.stdout.write(`${JSON.stringify(verdicts)}\n`);
+}
+
+/**
+ * Both validators of one union (see the header), and every member's `type`,
+ * with the legacy ones also in `legacyTypes`.
+ */
+function compileUnion(schemas, unionName) {
+  const union = schemas.get(unionName).json();
+  const types = [];
+  const legacyTypes = new Set();
+  for (const variant of union.oneOf) {
+    const type = variant.properties.type.const;
+    types.push(type);
+    if (variant['x-legacy'] === true) legacyTypes.add(type);
+  }
+  return {
+    types,
+    legacyTypes,
+    asWritten: compile(unionName, createAjv(false), union),
+    byVariant: compile(unionName, createAjv(true), withAjvDiscriminators(union)),
+  };
 }
 
 function report(failures) {
@@ -314,12 +385,15 @@ function isSubset(expected, actual) {
   return Object.entries(expected).every(([key, value]) => actual?.[key] === value);
 }
 
+function errorLines(errors) {
+  return (errors ?? []).map(
+    (e) => `${e.instancePath || '/'} ${e.keyword}: ${e.message} ${JSON.stringify(e.params)}`,
+  );
+}
+
 function formatErrors(errors) {
-  return (errors ?? [])
-    .map(
-      (e) =>
-        `      ${e.instancePath || '/'} ${e.keyword}: ${e.message} ${JSON.stringify(e.params)}`,
-    )
+  return errorLines(errors)
+    .map((line) => `      ${line}`)
     .join('\n');
 }
 

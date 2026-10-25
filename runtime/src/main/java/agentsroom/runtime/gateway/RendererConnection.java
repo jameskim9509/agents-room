@@ -1,5 +1,6 @@
 package agentsroom.runtime.gateway;
 
+import agentsroom.contract.ServerMessage;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +28,7 @@ public final class RendererConnection {
     }
 
     /** Queues {@code frame} for this renderer. Safe to call from any thread. */
-    public void send(ServerFrame frame) {
+    public void send(ServerMessage frame) {
         sendText(codec.encode(frame));
     }
 

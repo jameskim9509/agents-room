@@ -1,124 +1,148 @@
 package agentsroom.runtime.gateway;
 
+import agentsroom.contract.AgentSnapshot;
+import agentsroom.contract.AgentStatus;
+import agentsroom.contract.AgentSummary;
+import agentsroom.contract.AgentsUpdated;
+import agentsroom.contract.CommandRejected;
+import agentsroom.contract.FileEntry;
+import agentsroom.contract.ProjectErrorCode;
+import agentsroom.contract.ProjectInfo;
+import agentsroom.contract.ProjectOpenFailed;
+import agentsroom.contract.ProjectOpened;
+import agentsroom.contract.Readiness;
+import agentsroom.contract.RecentProject;
+import agentsroom.contract.RejectReason;
+import agentsroom.contract.Snapshot;
 import agentsroom.runtime.agent.AgentConfig;
-import agentsroom.runtime.persistence.RecentProject;
-import agentsroom.runtime.project.FileEntry;
-import agentsroom.runtime.project.ProjectErrorCode;
-import agentsroom.runtime.project.ProjectInfo;
+import agentsroom.runtime.agent.HarnessCatalog;
+import agentsroom.runtime.logging.SecretMasker;
 import agentsroom.runtime.workspace.WorkspaceSnapshot;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Builds the frames the runtime sends, from domain data.
- *
- * <p>TODO(contract): temporary. Field names follow the draft {@code core/asyncapi.yaml} of the
- * contract PR (snapshot, projectOpened, projectOpenFailed, agentsUpdated, commandRejected). Once the
- * generated bindings land, build the generated message classes here instead of maps. Still missing
- * against that draft: {@code AgentSummary.readiness}, {@code reportsToolDetails} and
- * {@code reportsSubagentSessions}, which come from the harness catalog and the adapter check (not part
- * of this skeleton).
+ * Builds the frames the runtime sends, from domain data, as the classes generated from
+ * {@code core/asyncapi.yaml}. Every diagnostic {@code message} passes the masking layer here (ADR 0004
+ * decision 8, ADR 0005 decision 11).
  */
 public final class RendererFrames {
-
-    /** Every agent is {@code offline} after a restart; nothing runs yet (ADR 0005). */
-    static final String STATUS_OFFLINE = "offline";
-
-    /** RejectReason: the frame is not a valid command. */
-    static final String REJECT_INVALID_MESSAGE = "INVALID_MESSAGE";
-
-    /** RejectReason: a contract command this runtime does not handle yet. */
-    static final String REJECT_NOT_IMPLEMENTED = "NOT_IMPLEMENTED";
 
     private RendererFrames() {
     }
 
     /** {@code snapshot}: sent first on every connect (D4). */
-    public static ServerFrame snapshot(WorkspaceSnapshot snapshot) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("currentProjectId", snapshot.currentProjectId());
-        body.put("recentProjects", snapshot.recentProjects().stream().map(RendererFrames::recentProject).toList());
+    public static Snapshot snapshot(WorkspaceSnapshot snapshot) {
+        Snapshot frame = new Snapshot();
+        frame.setCurrentProjectId(snapshot.currentProjectId());
+        frame.setRecentProjects(snapshot.recentProjects().stream().map(RendererFrames::recentProject).toList());
         if (snapshot.project() != null) {
-            body.put("project", project(snapshot.project()));
+            frame.setProject(project(snapshot.project()));
         }
-        body.put("agents", snapshot.agents().stream().map(RendererFrames::agentSnapshot).toList());
-        return new ServerFrame("snapshot", body);
+        frame.setAgents(snapshot.agents().stream().map(RendererFrames::agentSnapshot).toList());
+        return frame;
     }
 
-    public static ServerFrame projectOpened(ProjectInfo project) {
-        return new ServerFrame("projectOpened", Map.of("project", project(project)));
+    public static ProjectOpened projectOpened(agentsroom.runtime.project.ProjectInfo project) {
+        ProjectOpened frame = new ProjectOpened();
+        frame.setProject(project(project));
+        return frame;
     }
 
-    public static ServerFrame projectOpenFailed(String path, ProjectErrorCode code, String message) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("path", path == null ? "" : path);
-        body.put("code", code.name());
-        body.put("message", message);
-        return new ServerFrame("projectOpenFailed", body);
+    /** @param path the path as requested; {@code null} is sent as an empty string */
+    public static ProjectOpenFailed projectOpenFailed(
+            String path, agentsroom.runtime.project.ProjectErrorCode code, String message) {
+        ProjectOpenFailed frame = new ProjectOpenFailed();
+        frame.setPath(path == null ? "" : path);
+        frame.setCode(switch (code) {
+            case PATH_NOT_ABSOLUTE -> ProjectErrorCode.PATH_NOT_ABSOLUTE;
+            case PATH_NOT_FOUND -> ProjectErrorCode.PATH_NOT_FOUND;
+            case PATH_NOT_DIRECTORY -> ProjectErrorCode.PATH_NOT_DIRECTORY;
+            case PATH_NOT_READABLE -> ProjectErrorCode.PATH_NOT_READABLE;
+        });
+        frame.setMessage(SecretMasker.mask(message));
+        return frame;
     }
 
-    public static ServerFrame agentsUpdated(List<AgentConfig> agents) {
-        List<Map<String, Object>> summaries = agents.stream().map(RendererFrames::agentSummary).toList();
-        return new ServerFrame("agentsUpdated", Map.of("agents", summaries));
+    /** {@code agentsUpdated}: the current project's whole agent list. */
+    public static AgentsUpdated agentsUpdated(List<AgentConfig> agents) {
+        AgentsUpdated frame = new AgentsUpdated();
+        frame.setAgents(agents.stream().map(RendererFrames::agentSummary).toList());
+        return frame;
     }
 
-    public static ServerFrame commandRejected(String command, String reason, String message) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("command", command);
-        body.put("reason", reason);
-        body.put("message", message);
-        return new ServerFrame("commandRejected", body);
+    /** {@code commandRejected}: nothing changed. The ids the command carried go back with it. */
+    static CommandRejected commandRejected(CommandEcho echo, RejectReason reason, String message) {
+        CommandRejected frame = new CommandRejected();
+        frame.setCommand(echo.command());
+        frame.setReason(reason);
+        frame.setMessage(SecretMasker.mask(message));
+        frame.setAgentId(echo.agentId());
+        frame.setProjectId(echo.projectId());
+        frame.setPermissionId(echo.permissionId());
+        return frame;
     }
 
-    private static Map<String, Object> recentProject(RecentProject project) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("projectId", project.projectId());
-        map.put("name", project.name());
-        map.put("path", project.path());
-        return map;
+    private static RecentProject recentProject(agentsroom.runtime.persistence.RecentProject project) {
+        RecentProject recent = new RecentProject();
+        recent.setProjectId(project.projectId());
+        recent.setName(project.name());
+        recent.setPath(project.path());
+        return recent;
     }
 
-    private static Map<String, Object> project(ProjectInfo project) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("projectId", project.projectId());
-        map.put("name", project.name());
-        map.put("path", project.path());
-        map.put("files", project.files().stream().map(RendererFrames::fileEntry).toList());
-        map.put("filesTruncated", project.filesTruncated());
-        return map;
+    private static ProjectInfo project(agentsroom.runtime.project.ProjectInfo project) {
+        ProjectInfo info = new ProjectInfo();
+        info.setProjectId(project.projectId());
+        info.setName(project.name());
+        info.setPath(project.path());
+        info.setFiles(project.files().stream().map(RendererFrames::fileEntry).toList());
+        info.setFilesTruncated(project.filesTruncated());
+        return info;
     }
 
-    private static Map<String, Object> fileEntry(FileEntry entry) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("relativePath", entry.relativePath());
-        map.put("directory", entry.directory());
-        return map;
+    private static FileEntry fileEntry(agentsroom.runtime.project.FileEntry entry) {
+        FileEntry file = new FileEntry();
+        file.setRelativePath(entry.relativePath());
+        file.setDirectory(entry.directory());
+        return file;
     }
 
-    private static Map<String, Object> agentSummary(AgentConfig agent) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("agentId", agent.agentId());
-        map.put("projectId", agent.projectId());
-        map.put("name", agent.name());
-        map.put("harnessId", agent.harnessId());
-        map.put("providerId", agent.providerId());
-        map.put("modelId", agent.modelId());
-        map.put("authMethodId", agent.authMethodId());
-        map.put("palette", agent.palette());
-        map.put("hueShift", agent.hueShift());
-        return map;
+    /**
+     * An AgentConfig plus what the catalog says about its harness. Readiness is {@code configured} for
+     * a pair the catalog runs, otherwise {@code unsupported}; the adapter checks that can lower it come
+     * with the adapter launch (see {@link HarnessCatalog}).
+     */
+    private static AgentSummary agentSummary(AgentConfig agent) {
+        AgentSummary summary = new AgentSummary();
+        summary.setAgentId(agent.agentId());
+        summary.setProjectId(agent.projectId());
+        summary.setName(agent.name());
+        summary.setHarnessId(agent.harnessId());
+        summary.setProviderId(agent.providerId());
+        summary.setModelId(agent.modelId());
+        summary.setAuthMethodId(agent.authMethodId());
+        summary.setReadiness(HarnessCatalog.supports(agent) ? Readiness.CONFIGURED : Readiness.UNSUPPORTED);
+        summary.setPalette(agent.palette());
+        summary.setHueShift(agent.hueShift());
+        summary.setReportsToolDetails(HarnessCatalog.reportsToolDetails(agent));
+        summary.setReportsSubagentSessions(HarnessCatalog.reportsSubagentSessions(agent));
+        return summary;
     }
 
-    private static Map<String, Object> agentSnapshot(AgentConfig agent) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("agent", agentSummary(agent));
-        map.put("status", STATUS_OFFLINE);
-        map.put("sessionId", null);
-        map.put("runId", null);
-        map.put("lastSeq", 0L);
-        map.put("toolCalls", List.of());
-        map.put("pendingPermissions", List.of());
-        return map;
+    /**
+     * An agent at snapshot time. Nothing runs yet, so every agent is {@code offline} with no session,
+     * run, tool calls, permissions or events (ADR 0005), and every optional field is left out.
+     */
+    private static AgentSnapshot agentSnapshot(AgentConfig agent) {
+        AgentSnapshot snapshot = new AgentSnapshot();
+        snapshot.setAgent(agentSummary(agent));
+        snapshot.setStatus(AgentStatus.OFFLINE);
+        snapshot.setSessionId(null);
+        snapshot.setRunId(null);
+        snapshot.setLastSeq(0L);
+        snapshot.setToolCalls(List.of());
+        snapshot.setPendingPermissions(List.of());
+        snapshot.setRecentEvents(List.of());
+        return snapshot;
     }
 }

@@ -29,6 +29,15 @@ public record AgentConfig(
 
     public static final int PALETTE_COUNT = 6;
 
+    /** A shifted hue is 45-315 degrees (ux.md); 0 means no shift. */
+    static final int MIN_HUE_SHIFT = 45;
+    static final int MAX_HUE_SHIFT = 315;
+
+    /** Whether {@code hueShift} is 0 or 45-315, the values the contract allows. */
+    public static boolean isValidHueShift(int hueShift) {
+        return hueShift == 0 || (hueShift >= MIN_HUE_SHIFT && hueShift <= MAX_HUE_SHIFT);
+    }
+
     /**
      * The agent seeded on a project's first open (D10), until "add agent" exists (SCRUM-25, 26): Codex
      * with a ChatGPT login and the harness's default model.

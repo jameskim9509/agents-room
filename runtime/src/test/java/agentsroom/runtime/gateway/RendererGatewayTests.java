@@ -3,6 +3,8 @@ package agentsroom.runtime.gateway;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import agentsroom.runtime.shell.ShellLinkConfiguration;
+import agentsroom.runtime.testsupport.ContractSchema;
+import agentsroom.runtime.testsupport.ContractSchema.Verdict;
 import io.netty.handler.codec.http.websocketx.WebSocketClientHandshakeException;
 import java.io.IOException;
 import java.net.URI;
@@ -15,6 +17,7 @@ import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -44,6 +47,7 @@ import reactor.netty.http.client.WebsocketClientSpec;
 import reactor.test.StepVerifier;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** The renderer WebSocket end to end: the gate, the snapshot on connect, commands and broadcasts. */
 @SpringBootTest(
@@ -164,13 +168,18 @@ class RendererGatewayTests {
         assertThat(agent.get("harnessId").asString()).isEqualTo("codex");
         assertThat(agent.get("projectId").asString()).isEqualTo(project.get("projectId").asString());
         assertThat(agent.get("modelId").isNull()).isTrue();
+        assertThat(agent.get("readiness").asString()).isEqualTo("configured");
+        assertThat(agent.get("reportsToolDetails").asBoolean()).isTrue();
+        assertThat(agent.get("reportsSubagentSessions").asBoolean()).isFalse();
 
         JsonNode snapshot = converse(origin(APP_ORIGIN), List.of(), 1).getFirst();
         assertThat(snapshot.get("currentProjectId").asString()).isEqualTo(project.get("projectId").asString());
         assertThat(snapshot.get("project").get("path").asString()).isEqualTo(folder.toRealPath().toString());
-        assertThat(snapshot.get("agents").get(0).get("status").asString()).isEqualTo("offline");
-        assertThat(snapshot.get("agents").get(0).get("agent").get("agentId").asString())
-                .isEqualTo(agent.get("agentId").asString());
+        JsonNode agentSnapshot = snapshot.get("agents").get(0);
+        assertThat(agentSnapshot.get("status").asString()).isEqualTo("offline");
+        assertThat(agentSnapshot.get("agent")).isEqualTo(agent);
+        assertThat(agentSnapshot.get("lastSeq").asLong()).isZero();
+        assertThat(agentSnapshot.get("recentEvents").isEmpty()).isTrue();
     }
 
     @Test
@@ -193,17 +202,85 @@ class RendererGatewayTests {
         List<String> badFrames = List.of(
                 "not json",
                 "{\"type\":\"bogus\"}",
+                "{\"type\":\"webviewReady\"}",
                 "{\"type\":\"startAgent\",\"agentId\":\"a\"}",
-                "{\"type\":\"openProject\"}");
+                "{\"type\":\"openProject\"}",
+                "{\"type\":\"openProject\",\"path\":\"C:\\\\x\",\"force\":true}");
 
-        List<JsonNode> frames = converse(origin(APP_ORIGIN), badFrames, 5);
+        List<JsonNode> frames = converse(origin(APP_ORIGIN), badFrames, 7);
 
-        assertThat(frames.subList(1, 5)).allSatisfy(frame -> assertThat(frame.get("type").asString())
+        List<JsonNode> replies = frames.subList(1, 7);
+        assertThat(replies).allSatisfy(frame -> assertThat(frame.get("type").asString())
                 .isEqualTo("commandRejected"));
-        assertThat(frames.subList(1, 5)).extracting(frame -> frame.get("command").asString())
-                .containsExactly("unknown", "bogus", "startAgent", "openProject");
-        assertThat(frames.subList(1, 5)).extracting(frame -> frame.get("reason").asString())
-                .containsExactly("INVALID_MESSAGE", "INVALID_MESSAGE", "NOT_IMPLEMENTED", "INVALID_MESSAGE");
+        assertThat(replies).extracting(frame -> frame.get("command").asString())
+                .containsExactly("unknown", "bogus", "webviewReady", "startAgent", "openProject", "openProject");
+        assertThat(replies).extracting(frame -> frame.get("reason").asString())
+                .containsExactly("INVALID_MESSAGE", "INVALID_MESSAGE", "INVALID_MESSAGE", "UNKNOWN_AGENT",
+                        "INVALID_MESSAGE", "INVALID_MESSAGE");
+        assertThat(replies.get(3).get("agentId").asString()).isEqualTo("a");
+    }
+
+    /**
+     * The commands this runtime does not handle yet still get their ids checked, and every frame of the
+     * conversation is an agents-room frame of {@code core/asyncapi.yaml}.
+     */
+    @Test
+    void checksTheIdsOfTheCommandsItDoesNotHandleYetAndAnswersInContractFrames() throws Exception {
+        Path folder = Files.createDirectories(projects.resolve("ids"));
+        TestRenderer renderer = TestRenderer.connect(uri(TOKEN));
+        renderer.next();
+        renderer.send(openProject(folder.toString()));
+        String projectId = renderer.next().get("project").get("projectId").asString();
+        String agentId = renderer.next().get("agents").get(0).get("agentId").asString();
+        String unknown = UUID.randomUUID().toString();
+        String path = folder.toString();
+
+        record Case(String command, String reason, String agentId, String projectId, String permissionId) {
+        }
+        List<Case> cases = List.of(
+                new Case(command("checkConnection", "agentId", agentId), "NOT_IMPLEMENTED", agentId, null, null),
+                new Case(command("startAgent", "agentId", agentId), "NOT_IMPLEMENTED", agentId, null, null),
+                new Case(command("stopAgent", "agentId", agentId), "NOT_IMPLEMENTED", agentId, null, null),
+                new Case(command("sendPrompt", "agentId", agentId, "text", "hi"), "NOT_IMPLEMENTED", agentId, null,
+                        null),
+                new Case(command("cancelRun", "agentId", agentId, "runId", unknown), "NOT_IMPLEMENTED", agentId, null,
+                        null),
+                new Case(command("respondPermission", "permissionId", unknown, "optionId", "approved"),
+                        "NOT_IMPLEMENTED", null, null, unknown),
+                new Case(command("relocateProject", "projectId", projectId, "path", path), "NOT_IMPLEMENTED", null,
+                        projectId, null),
+                new Case(saveAgentConfig(projectId, null), "NOT_IMPLEMENTED", null, projectId, null),
+                new Case(saveAgentConfig(projectId, agentId), "NOT_IMPLEMENTED", agentId, projectId, null),
+                new Case(command("startAgent", "agentId", unknown), "UNKNOWN_AGENT", unknown, null, null),
+                new Case(command("sendPrompt", "agentId", unknown, "text", "hi"), "UNKNOWN_AGENT", unknown, null, null),
+                new Case(command("relocateProject", "projectId", unknown, "path", path), "UNKNOWN_PROJECT", null,
+                        unknown, null),
+                new Case(saveAgentConfig(unknown, null), "UNKNOWN_PROJECT", null, unknown, null),
+                new Case(saveAgentConfig(projectId, unknown), "UNKNOWN_AGENT", unknown, projectId, null),
+                new Case(command("sendPrompt", "agentId", agentId), "INVALID_MESSAGE", agentId, null, null));
+
+        for (Case expected : cases) {
+            renderer.send(expected.command());
+            JsonNode reply = renderer.next();
+
+            String type = json.readTree(expected.command()).get("type").asString();
+            assertThat(reply.get("type").asString()).as(expected.command()).isEqualTo("commandRejected");
+            assertThat(reply.get("command").asString()).isEqualTo(type);
+            assertThat(reply.get("reason").asString()).as(expected.command()).isEqualTo(expected.reason());
+            assertThat(text(reply, "agentId")).as("agentId of %s", expected.command()).isEqualTo(expected.agentId());
+            assertThat(text(reply, "projectId")).as("projectId of %s", expected.command())
+                    .isEqualTo(expected.projectId());
+            assertThat(text(reply, "permissionId")).isEqualTo(expected.permissionId());
+        }
+        renderer.close();
+
+        List<String> received = renderer.texts();
+        assertThat(received).hasSize(3 + cases.size());
+        List<Verdict> verdicts = ContractSchema.validateServerMessages(received);
+        for (int i = 0; i < received.size(); i++) {
+            assertThat(verdicts.get(i).isAgentsRoomMessage()).as("%s %s", received.get(i), verdicts.get(i).errors())
+                    .isTrue();
+        }
     }
 
     @Test
@@ -217,10 +294,10 @@ class RendererGatewayTests {
             awaitCondition(() -> first.size() == 1 && second.size() == 1);
             awaitCondition(() -> gateway.connectionCount() >= 2);
 
-            gateway.broadcast(new ServerFrame("test", Map.of("value", 42)));
+            gateway.broadcast(RendererFrames.agentsUpdated(List.of()));
 
             awaitCondition(() -> first.size() == 2 && second.size() == 2);
-            assertThat(first.get(1)).isEqualTo("{\"type\":\"test\",\"value\":42}");
+            assertThat(first.get(1)).isEqualTo("{\"type\":\"agentsUpdated\",\"agents\":[]}");
             assertThat(second.get(1)).isEqualTo(first.get(1));
         } finally {
             one.dispose();
@@ -326,6 +403,37 @@ class RendererGatewayTests {
         return json.writeValueAsString(Map.of("type", "openProject", "path", path));
     }
 
+    /** A command of {@code type} with string fields given as name, value, name, value... */
+    private String command(String type, String... fields) {
+        ObjectNode command = json.createObjectNode().put("type", type);
+        for (int i = 0; i < fields.length; i += 2) {
+            command.put(fields[i], fields[i + 1]);
+        }
+        return command.toString();
+    }
+
+    /** {@code saveAgentConfig} for the default Codex agent; without {@code agentId} it creates one. */
+    private String saveAgentConfig(String projectId, String agentId) {
+        ObjectNode command = json.createObjectNode().put("type", "saveAgentConfig");
+        ObjectNode config = command.putObject("config");
+        if (agentId != null) {
+            config.put("agentId", agentId);
+        }
+        config.put("projectId", projectId)
+                .put("name", "Codex")
+                .put("harnessId", "codex")
+                .put("providerId", "openai")
+                .putNull("modelId");
+        config.put("authMethodId", "chat-gpt");
+        return command.toString();
+    }
+
+    /** The string field, or {@code null} when the frame left it out. */
+    private static String text(JsonNode frame, String field) {
+        JsonNode value = frame.get(field);
+        return value == null ? null : value.asString();
+    }
+
     private static void awaitCondition(BooleanSupplier condition) throws InterruptedException {
         long deadline = System.nanoTime() + TIMEOUT.toNanos();
         while (!condition.getAsBoolean()) {
@@ -339,6 +447,7 @@ class RendererGatewayTests {
 
         private final JsonMapper json = JsonMapper.builder().build();
         private final BlockingQueue<JsonNode> frames = new LinkedBlockingQueue<>();
+        private final List<String> texts = new CopyOnWriteArrayList<>();
         private final StringBuilder partial = new StringBuilder();
         private final AtomicInteger received = new AtomicInteger();
         private WebSocket socket;
@@ -356,6 +465,7 @@ class RendererGatewayTests {
         public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
             partial.append(data);
             if (last) {
+                texts.add(partial.toString());
                 frames.add(json.readTree(partial.toString()));
                 partial.setLength(0);
                 received.incrementAndGet();
@@ -377,6 +487,11 @@ class RendererGatewayTests {
 
         int received() {
             return received.get();
+        }
+
+        /** Every frame received so far, as sent. */
+        List<String> texts() {
+            return List.copyOf(texts);
         }
 
         void send(String text) {

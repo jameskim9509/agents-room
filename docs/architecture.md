@@ -130,7 +130,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 - MVP 저장 대상은 최근 프로젝트, 프로젝트별 AgentConfig, 사무실 레이아웃, UI 설정이다 (SCRUM-32, 37). 레이아웃 편집(SCRUM-59)은 post-MVP다. 비밀과 "실행 중" 상태는 저장하지 않으므로, 앱을 다시 시작하면 모든 에이전트는 `offline`이다. 이벤트 이력은 post-MVP다 (SCRUM-52).
 - 원자적으로 저장한다: 같은 폴더의 tmp 파일에 쓰고 디스크에 내린 뒤 `Files.move(ATOMIC_MOVE, REPLACE_EXISTING)`로 바꿔 넣는다 (업스트림에서 이어받은 교훈).
-- 파일이 손상되면 덮어쓰지 않는다. `<파일 이름>.corrupt-<epoch ms>`로 옮겨 남기고, 빈 상태로 시작하고, 로그에 남긴다. 손상된 `agents.json`이면 기본 에이전트를 새로 만든다. 사용자에게 알리고 "초기화 유지"와 "복구 시도" 중에서 고르게 하는 것은 SCRUM-37이다 (제안).
+- 파일이 손상되면 덮어쓰지 않는다. JSON이 아니거나 형식이 다르거나, 값이 계약 범위(예: `palette` 0–5, `hueShift` 0 또는 45–315)를 벗어나면 손상으로 본다. `<파일 이름>.corrupt-<epoch ms>`로 옮겨 남기고, 빈 상태로 시작하고, 로그에 남긴다. 손상된 `agents.json`이면 기본 에이전트를 새로 만든다. 사용자에게 알리고 "초기화 유지"와 "복구 시도" 중에서 고르게 하는 것은 SCRUM-37이다 (제안).
 - 파일이 있는데 읽을 수 없으면(잠김, 권한) 손상으로 보지 않고 덮어쓰지도 않는다. `recent-projects.json`이면 [Project/Workspace service](#projectworkspace-service)의 이번 실행 전용 `projectId` 규칙을 따른다. `agents.json`이면 이번에 열 때만 기본 에이전트를 쓰고, 다음에 열 때 다시 읽는다.
 
 ### Renderer gateway
@@ -175,15 +175,33 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 | `shell`       | stdout 제어 경로(`ControlChannel`), 준비 줄, stdin EOF와 부모 종료 감시, 종료 시간 제한                                          |
 | `process`     | Windows job object(`ChildProcessContainment`), 프로세스 트리 종료(`ProcessTreeKiller`): 자손 목록을 먼저 잡고 모두 강제 종료한다 |
 | `logging`     | 마스킹 계층(`SecretMasker`, logback `%mask`, stderr 전체를 가리는 `MaskingOutputStream`)                                         |
-| `gateway`     | Renderer gateway: `/ws`, 토큰과 Origin 게이트, 연결별 세션, 브로드캐스트, 명령 처리                                              |
+| `gateway`     | Renderer gateway: `/ws`, 토큰과 Origin 게이트, 연결별 세션, 브로드캐스트, 계약 코덱과 명령 형식 검사, 명령 처리                  |
 | `project`     | 경로 검증(`ProjectPathValidator`), 최소 파일 트리(`FileTreeReader`)                                                              |
 | `workspace`   | Project/Workspace service: 현재 프로젝트, 최근 목록, 스냅샷 데이터                                                               |
-| `agent`       | AgentConfig와 기본 에이전트                                                                                                      |
+| `agent`       | AgentConfig, 기본 에이전트, 정적 실행기 카탈로그(`HarnessCatalog`)                                                               |
 | `persistence` | 데이터 디렉터리의 JSON 파일(원자적 저장, 손상 파일 보존)                                                                         |
 
-- 메시지 형식은 임시다. `gateway`의 임시 프레임 타입(`ClientFrame`, `ServerFrame`)과 코덱(`RendererMessageCodec`)이 일반 JSON 맵을 쓰고, 필드 이름은 계약 초안을 따른다. `core/asyncapi.yaml`의 Java 바인딩이 생기면 코드에 `TODO(contract)`로 표시한 자리만 바꾼다.
-- 지금 처리하는 명령은 `openProject`뿐이다. 연결될 때마다 먼저 `snapshot`을 보낸다. 성공하면 모든 렌더러에 `projectOpened`와 `agentsUpdated`를 보내고, 실패하면 보낸 렌더러에만 `projectOpenFailed`를 보낸다. 계약의 다른 명령에는 `commandRejected`(`NOT_IMPLEMENTED`)로 답한다.
-- 빌드와 테스트는 루트에서 `npm run runtime:build`(빌드, 테스트, `dev-runtime.json`)와 `npm run runtime:test`로 한다. `scripts/gradle.mjs`가 OS에 맞는 wrapper를 부른다.
+- 메시지 타입은 `core/asyncapi.yaml`에서 생성한 Java 바인딩(패키지 `agentsroom.contract`)이다 ([ADR 0005](adr/0005-agent-event-model.md) 결정 11).
+  - Gradle 작업 `generateContractBindings`가 빌드 때 루트에서 `node --import tsx scripts/generate-messages.ts --java`(`npm run asyncapi:generate:java`와 같은 명령)를 실행해 `runtime/build/generated/sources/contract`에 만든다. 커밋하지 않는다. npm과 cmd.exe를 거치지 않으므로 Windows와 Linux에서 인자와 따옴표 처리가 같다.
+  - 생성 코드는 별도 source set(`contract`)에서 컴파일한다. Modelina 출력에 불필요한 캐스트 같은 lint 경고가 있어서, 손으로 쓴 코드의 `-Xlint:all -Werror`를 풀지 않으려는 것이다.
+  - 상속 프레임(`x-legacy`)은 바인딩에 없다. 그래서 런타임은 상속 프레임을 보내지 않고, 상속 명령은 모르는 명령처럼 거절한다.
+- 코덱(`ContractMessageCodec`)은 명령을 바인딩에 넣기 전에 JSON 트리에서 형식을 검사한다(`CommandShapes`). 검사 항목은 필수 필드, 타입(문자열, null을 허용하는 문자열, 객체), 정의되지 않은 필드, 중복 키, 뒤에 남은 내용이다. 생성된 클래스는 이 중 아무것도 강제하지 않고, 빠진 필드와 `null`도 구분하지 못한다.
+- 명령은 형식 → id → 구현 여부 순서로 확인한다.
+  - 형식이 틀리거나 모르는 명령이면 `INVALID_MESSAGE`, 모르는 `projectId`면 `UNKNOWN_PROJECT`, 모르는 `agentId`면 `UNKNOWN_AGENT`다.
+  - 아는 `projectId`는 최근 목록에 있는 프로젝트다(이번 실행 전용 id 포함). 아는 `agentId`는 현재 프로젝트의 에이전트다. `saveAgentConfig`가 둘 다 담으면 그 에이전트가 그 프로젝트의 것이어야 한다.
+  - `commandRejected`는 명령의 `type`과, 명령에 들어 있던 `agentId`·`projectId`·`permissionId`(`saveAgentConfig`는 `config` 안의 값)를 돌려준다. `message`는 마스킹 계층을 거치고, 필드 이름은 쓰지만 값은 옮기지 않는다.
+- 지금 처리하는 명령은 `openProject`뿐이다. 연결될 때마다 먼저 `snapshot`을 보낸다. 성공하면 모든 렌더러에 `projectOpened`와 `agentsUpdated`를 보내고, 실패하면 보낸 렌더러에만 `projectOpenFailed`를 보낸다. 계약의 다른 명령은 id를 확인한 뒤 `commandRejected`(`NOT_IMPLEMENTED`)로 답한다. 대기 중인 권한 요청이 아직 생기지 않으므로 `respondPermission`의 `permissionId`는 확인하지 않는다.
+- `AgentSummary`의 `readiness`, `reportsToolDetails`, `reportsSubagentSessions`는 정적 실행기 카탈로그(`HarnessCatalog`)에서 온다 ([ux.md](ux.md#관찰한-것만-보여준다) R3, R4).
+  - `codex`는 `openai` + `chat-gpt`일 때 `configured`다. codex-acp는 Tool 호출에 kind와 status를 붙여 보내므로 `reportsToolDetails: true`다. agents-room이 `subagents` capability를 광고하지 않으면 서브에이전트도 일반 Tool 호출로 보내고 자식 세션을 알리지 않으므로 `reportsSubagentSessions: false`다 (Sprint 0 제안).
+  - 카탈로그에 없는 실행기나 조합(예: Codex + Bedrock, [ADR 0004](adr/0004-model-authentication.md)의 spike 전)은 `unsupported`다. 모르는 실행기는 두 값이 모두 `false`다.
+  - 어댑터 설치 확인(`executable_missing`)과 인증 상태(`auth_required`)는 어댑터 실행(SCRUM-23, 65)과 함께 붙인다.
+- 계약 테스트: 런타임이 만드는 모든 프레임과 WebSocket 대화로 받은 프레임을 `node scripts/check-contract-fixtures.mjs --verdicts <dir>`로 검사한다. `npm run contract:check`와 같은 ajv 설정이다. 그 밖에 다음을 확인한다.
+  - 유효 fixture는 모두 코덱을 통과한다. 명령은 필드를 잃지 않고 바인딩되고, 서버 프레임은 fixture와 같은 JSON으로 다시 인코딩된다. 무효 명령 fixture는 모두 거절한다.
+  - 형식 검사표의 명령과 필드는 생성된 클래스와 같다.
+  - 유효 명령 fixture와 그 변형(필드 삭제, `null`, 다른 타입, 필드 추가)에서 코덱은 ajv와 같은 판정을 낸다.
+  - Java JSON Schema 라이브러리를 쓰지 않는 이유는, 검사기가 둘이면 스키마(`if`/`then`/`else`, 타입 없는 `not`, AsyncAPI `discriminator`)를 서로 다르게 읽을 수 있어서다. node는 바인딩 생성 때문에 이미 필요하다.
+- 빌드와 테스트는 루트에서 `npm run runtime:build`(빌드, 테스트, `dev-runtime.json`)와 `npm run runtime:test`로 한다. `scripts/gradle.mjs`가 OS에 맞는 wrapper를 부른다. node가 PATH에 있어야 하고, 루트에서 먼저 `npm ci`(또는 `npm install`)를 해야 한다.
+- CI의 `runtime` job(ubuntu)이 같은 빌드를 돌린다. Windows 전용 테스트(job object, junction, 8.3 짧은 이름)는 Linux에서 건너뛰고, 지금은 Windows 개발 PC에서만 돈다.
 - job object는 FFM API로 kernel32를 부른다. 그래서 boot jar 매니페스트에 `Enable-Native-Access: ALL-UNNAMED`를 넣었다. 셸의 실행 명령은 그대로다.
 - Gradle을 띄우려면 JDK 17 이상이 `JAVA_HOME`이나 PATH에 있어야 한다. 빌드에 쓰는 JDK 25가 없으면 Gradle이 기본 `~/.gradle`(`~/.gradle/jdks`)에 내려받는다. Windows에서 `GRADLE_USER_HOME`을 깊은 경로로 바꾸면 압축을 풀 때 MAX_PATH(260자)를 넘어 실패한다.
 

@@ -30,10 +30,9 @@ class RendererGatewayConfiguration implements WebFluxConfigurer {
         return new RendererConnectionGate(environment.token(), environment.allowedOrigins());
     }
 
-    // TODO(contract): swap for the codec over the generated bindings.
     @Bean
     RendererMessageCodec rendererMessageCodec() {
-        return new JsonMapRendererMessageCodec();
+        return new ContractMessageCodec();
     }
 
     @Bean

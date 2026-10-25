@@ -1,17 +1,20 @@
 package agentsroom.runtime.gateway;
 
+import agentsroom.contract.ClientMessage;
+import agentsroom.contract.ServerMessage;
+
 /**
  * Turns WebSocket text frames into commands and frames into text. The only place that knows the wire
- * format.
- *
- * <p>TODO(contract): the seam for the generated bindings. After the contract PR, implement this over
- * the generated {@code ClientMessage}/{@code ServerMessage} types (a Jackson 3 {@code JsonMapper}
- * with the discriminator) and delete {@link JsonMapRendererMessageCodec}.
+ * format: the {@code ClientMessage} and {@code ServerMessage} bindings generated from
+ * {@code core/asyncapi.yaml} (ADR 0005 decision 11).
  */
 public interface RendererMessageCodec {
 
-    /** @throws MalformedFrameException when {@code text} is not a command */
-    ClientFrame decode(String text) throws MalformedFrameException;
+    /**
+     * @return the command, checked against its contract shape
+     * @throws MalformedFrameException when {@code text} is not a valid agents-room command
+     */
+    ClientMessage decode(String text) throws MalformedFrameException;
 
-    String encode(ServerFrame frame);
+    String encode(ServerMessage frame);
 }

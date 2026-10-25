@@ -1,5 +1,7 @@
 package agentsroom.runtime.gateway;
 
+import agentsroom.contract.ClientMessage;
+import agentsroom.contract.ServerMessage;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -80,14 +82,14 @@ public final class RendererGateway implements WebSocketHandler, DisposableBean {
      * @param change mutates the state and returns the frames to broadcast, in order. It runs under
      *     the publish lock, so it must stay short: no slow disk or network work.
      */
-    public void publish(Supplier<List<ServerFrame>> change) {
+    public void publish(Supplier<List<ServerMessage>> change) {
         synchronized (publishLock) {
             change.get().forEach(this::broadcast);
         }
     }
 
     /** Sends {@code frame} to every connected renderer. State changes go through {@link #publish}. */
-    public void broadcast(ServerFrame frame) {
+    public void broadcast(ServerMessage frame) {
         String text = codec.encode(frame);
         synchronized (publishLock) {
             connections.values().forEach(connection -> connection.sendText(text));
@@ -112,14 +114,14 @@ public final class RendererGateway implements WebSocketHandler, DisposableBean {
                 connect(connection, handler);
                 return;
             }
-            ClientFrame frame;
+            ClientMessage command;
             try {
-                frame = codec.decode(event.get());
+                command = codec.decode(event.get());
             } catch (MalformedFrameException e) {
                 handler.onMalformedFrame(connection, e);
                 return;
             }
-            handler.onFrame(connection, frame);
+            handler.onCommand(connection, command);
         } catch (RuntimeException e) {
             // Keep the connection: one failed command must not cut the renderer off.
             log.error("Renderer frame handling failed", e);

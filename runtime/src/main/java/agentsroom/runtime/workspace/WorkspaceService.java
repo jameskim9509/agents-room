@@ -118,6 +118,25 @@ public class WorkspaceService {
         return new OpenedProject(project, agents);
     }
 
+    /**
+     * Whether {@code projectId} names a project this runtime knows: one on the recent list, stored or
+     * issued for this session only. A command naming any other projectId is {@code UNKNOWN_PROJECT}.
+     */
+    public synchronized boolean isKnownProject(String projectId) {
+        return recentProjects.stream().anyMatch(project -> project.projectId().equals(projectId));
+    }
+
+    /**
+     * The current project's agent with this id. The runtime holds the current project's agents only,
+     * so for a command an agent of another project is as unknown as a made-up id.
+     */
+    public synchronized Optional<AgentConfig> findAgent(String agentId) {
+        if (current == null) {
+            return Optional.empty();
+        }
+        return current.agents().stream().filter(agent -> agent.agentId().equals(agentId)).findFirst();
+    }
+
     /** The current state, for the snapshot a renderer gets on every connect. In memory only. */
     public synchronized WorkspaceSnapshot snapshot() {
         List<RecentProject> shown = recentProjects.subList(0, Math.min(RECENT_PROJECTS_SHOWN, recentProjects.size()));

@@ -65,7 +65,8 @@ public class AgentConfigRepository {
                 && isPresent(agent.providerId())
                 && isPresent(agent.authMethodId())
                 && agent.palette() >= 0
-                && agent.palette() < AgentConfig.PALETTE_COUNT;
+                && agent.palette() < AgentConfig.PALETTE_COUNT
+                && AgentConfig.isValidHueShift(agent.hueShift());
     }
 
     private static boolean isPresent(String value) {
