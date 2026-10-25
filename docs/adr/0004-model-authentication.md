@@ -4,6 +4,7 @@
 
 Accepted (2026-10-23 팀 결정).
 Jira는 원칙을 정했지만 방식은 정하지 않았다. 이 ADR은 그 원칙을 지키는 방식을 정한다.
+Sprint 0 계약에 맞춰 신원 정보를 표시하지 않기로 정했다 (2026-10-25, 결정 9).
 
 ## 날짜
 
@@ -40,7 +41,7 @@ Jira는 원칙을 정했지만 방식은 정하지 않았다. 이 ADR은 그 원
 6. 연결 확인(`checkConnection`): MVP 실행기는 어댑터를 띄워 `initialize`를 보내고, 광고된 `authMethods`와 인증 방식 표의 "상태 확인" 열로 인증 상태를 본다. 세션은 만들지 않는다. Bedrock은 유료 invoke 없이 AWS 단계를 더한다: 고른 profile과 region으로 STS [`GetCallerIdentity`](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html)(자격증명) → `ListInferenceProfiles` 또는 `ListFoundationModels`(권한과 카탈로그) → [`GetFoundationModelAvailability`](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_GetFoundationModelAvailability.html)(계약, 승인, 리전). 실패하면 필요한 IAM action 이름을, Anthropic 모델에는 First Time Use 양식 안내를 보여준다 ([모델 접근](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html)). 모델 목록은 하드코딩하지 않는다. 검사할 수 없는 단계는 `CHECK_UNAVAILABLE`로 표시하고 정상으로 보지 않는다. MVP의 Bedrock mock(결정 10)은 AWS 단계 대신 mock 서버가 응답하는지만 확인한다.
 7. 인증 오류는 아래 감지 표처럼 판정한다 (SCRUM-14, 25, 65). ACP 요청에서 나오는 `AUTH_REQUIRED`와 `AUTH_FAILED`는 [ADR 0003](0003-acp-integration.md)의 감지 표, 코드의 정의는 [ADR 0005](0005-agent-event-model.md)에 있다. Bedrock은 만료된 토큰을 403으로 알리므로 403만으로는 만료와 권한 거부를 구분할 수 없다. 401을 만료로 보는 것은 Mantle에서뿐이다 ([Claude Code 오류](https://code.claude.com/docs/en/errors)). 그래서 Bedrock Runtime의 403과 401은 STS를 다시 불러서 판정한다.
 8. 마스킹 (SCRUM-15, 34, 49): Spring 로깅에 중앙 마스킹 계층을 둔다. 키 이름 기준(`*_API_KEY`, `*TOKEN*`, `*SECRET*`, `Authorization`, `AWS_SESSION_TOKEN`)과 값 패턴 기준(`AKIA`/`ASIA` 접두 access key ID, `sk-` 접두 키, Bearer 값)을 함께 쓴다 ([OWASP Logging](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)). 자식 env 맵 전체를 로그로 남기지 않는다. 어댑터 stderr와 `app-server.log`는 신뢰할 수 없는 출력이다. `APP_SERVER_LOGS`는 기본으로 끈다 (codex-acp Logger는 redaction 없이 기록한다). 비밀을 클립보드나 로그로 자동으로 옮기지 않는다 (SCRUM-34).
-9. UI에 보이는 인증 정보는 어댑터가 보고한 인증 kind와 label, 사용자가 고른 profile 이름과 region, 성공과 실패뿐이다. 요금제(plan)는 앱이 설정하지 않으며, 어댑터가 label로 보고한 경우에만 그대로 보여준다 (SCRUM-65). 비밀은 어디에도 표시하지 않는다.
+9. UI에 보이는 인증 정보는 어댑터가 보고한 인증 kind와 label, 사용자가 고른 profile 이름과 region, 성공과 실패뿐이다. 요금제(plan)는 앱이 설정하지 않으며, 어댑터가 label로 보고한 경우에만 그대로 보여준다 (SCRUM-65). 비밀은 어디에도 표시하지 않는다. 신원 정보(어댑터가 보고한 `account.email` 같은 계정 필드, AWS 계정 ID)는 개인정보이므로 표시하지 않는다. 런타임이 렌더러로 보내기 전에 버리고, 계약에도 그 필드가 없다 ([ADR 0005](0005-agent-event-model.md) 결정 1).
 10. MVP의 Bedrock은 mock 서버다 (2026-10-23 팀 결정). 개발 PC나 CI에서 실제 Bedrock과 같은 API로 응답하는 mock을 띄우고, 어댑터가 그 주소로 요청하게 한다. 실제 AWS로 바꿀 때는 엔드포인트 지정과 인증 생략만 빼면 되게 만든다.
     - Claude Code (MVP의 Claude Code 연결 경로, SCRUM-66): spawn env로 `CLAUDE_CODE_USE_BEDROCK=1`, `ANTHROPIC_BEDROCK_BASE_URL=<mock 주소>`, `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1`을 준다 ([gateway 연결](https://code.claude.com/docs/en/llm-gateway-connect)). mock은 Claude Code가 쓰는 Bedrock Invoke API(`InvokeModelWithResponseStream`, `application/vnd.amazon.eventstream` 스트림)로 응답해야 한다 ([Bedrock](https://code.claude.com/docs/en/amazon-bedrock)). 실행해 보니(2026-10-23, [ADR 0003](0003-acp-integration.md) 맥락) Claude Code는 같은 주소로 `GET /inference-profiles?type=SYSTEM_DEFINED`(모델 목록)도 부르고, 세션 제목을 만들 때 다른 모델 ID로도 요청하며, 요청에 인증 헤더가 없다. mock은 모델 목록과 임의의 모델 ID를 받아야 한다.
     - Codex: Bedrock provider(`amazon-bedrock-runtime`)의 주소는 region으로 정해지고, 바꾸는 방법은 문서에 없다 ([Codex Bedrock](https://learn.chatgpt.com/docs/amazon-bedrock)). mock의 OpenAI 호환 경로(`/openai/v1`)를 가리키는 사용자 정의 provider를 `CODEX_CONFIG`로 넘기는 방법을 spike로 확인한다 (미검증).
@@ -97,7 +98,6 @@ Jira는 원칙을 정했지만 방식은 정하지 않았다. 이 ADR은 그 원
 - Bedrock mock이 미리 정한 응답만 줄지, 실제 모델로 중계할지. 지금은 미리 정한 응답이다 (결정 10).
 - 연결 확인에서 유료 호출을 허용할지.
 - Bedrock의 gpt-oss를 숨길지 "실험적"으로 표시할지. Codex에서 쓸 수 있는지는 문서가 없다 (SCRUM-25).
-- 신원 정보(이메일, AWS 계정 ID)를 표시할지 (PII).
 - Claude Code `/setup-bedrock`은 고른 인증 정보를 `~/.claude/settings.json`의 `env`에 저장하고, 그 값은 평문이다 ([Bedrock](https://code.claude.com/docs/en/amazon-bedrock), [설정](https://code.claude.com/docs/en/settings-reference#env)). 이를 사용자에게 경고할지.
 
 ## 관련 이슈

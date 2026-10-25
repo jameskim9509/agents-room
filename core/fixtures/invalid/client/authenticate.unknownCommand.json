@@ -1,0 +1,15 @@
+{
+  "description": "There is no authenticate command; login runs inside startAgent (stage authenticate).",
+  "expect": {
+    "keyword": "discriminator",
+    "instancePath": "",
+    "params": {
+      "tagValue": "authenticate"
+    }
+  },
+  "message": {
+    "type": "authenticate",
+    "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+    "methodId": "chat-gpt"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "description": "Every agent snapshot carries recentEvents (possibly empty): events are not resent after a reconnect.",
+  "expect": {
+    "keyword": "required",
+    "instancePath": "/agents/0",
+    "params": {
+      "missingProperty": "recentEvents"
+    }
+  },
+  "message": {
+    "type": "snapshot",
+    "currentProjectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+    "recentProjects": [
+      {
+        "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+        "name": "demo-app",
+        "path": "C:\\work\\demo-app"
+      },
+      {
+        "projectId": "9d8c7b6a-5f4e-4d3c-8b2a-19f8e7d6c5b4",
+        "name": "notes",
+        "path": "D:\\notes"
+      }
+    ],
+    "project": {
+      "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+      "name": "demo-app",
+      "path": "C:\\work\\demo-app",
+      "files": [
+        {
+          "relativePath": ".git",
+          "directory": true
+        },
+        {
+          "relativePath": "src",
+          "directory": true
+        },
+        {
+          "relativePath": "src/main.ts",
+          "directory": false
+        },
+        {
+          "relativePath": "README.md",
+          "directory": false
+        }
+      ],
+      "filesTruncated": false
+    },
+    "agents": [
+      {
+        "agent": {
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "name": "Codex (review)",
+          "harnessId": "codex",
+          "providerId": "openai",
+          "modelId": null,
+          "authMethodId": "chat-gpt",
+          "readiness": "configured",
+          "palette": 1,
+          "hueShift": 0,
+          "reportsToolDetails": true,
+          "reportsSubagentSessions": false
+        },
+        "status": "error",
+        "sessionId": null,
+        "runId": null,
+        "lastSeq": 8,
+        "toolCalls": [],
+        "pendingPermissions": [],
+        "prompt": "테스트를 실행해",
+        "lastRun": {
+          "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+          "outcome": "failed",
+          "errorCode": "PROCESS_EXITED",
+          "unfinishedToolCalls": [
+            {
+              "toolCallId": "call_3a7e",
+              "derivedStatus": "incomplete"
+            }
+          ]
+        },
+        "sessionEnd": {
+          "reason": "exited",
+          "exitCode": 1
+        },
+        "lastError": {
+          "code": "PROCESS_EXITED",
+          "stage": "running",
+          "message": "adapter exited with code 1"
+        }
+      }
+    ]
+  }
+}

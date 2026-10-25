@@ -1,0 +1,15 @@
+{
+  "type": "agentEvent",
+  "event": {
+    "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+    "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+    "sessionId": null,
+    "runId": null,
+    "seq": 2,
+    "receivedAt": 1792800000500,
+    "kind": "agentStarting",
+    "data": {
+      "stage": "spawn"
+    }
+  }
+}

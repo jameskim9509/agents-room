@@ -1,0 +1,20 @@
+{
+  "type": "agentEvent",
+  "event": {
+    "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+    "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+    "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+    "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+    "seq": 15,
+    "receivedAt": 1792800003750,
+    "kind": "usage",
+    "data": {
+      "used": 18234,
+      "size": 272000,
+      "cost": {
+        "amount": 0.0123,
+        "currency": "USD"
+      }
+    }
+  }
+}

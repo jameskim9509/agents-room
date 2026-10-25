@@ -1,0 +1,13 @@
+{
+  "description": "Project errors use ProjectErrorCode only.",
+  "expect": {
+    "keyword": "enum",
+    "instancePath": "/code"
+  },
+  "message": {
+    "type": "projectOpenFailed",
+    "path": "C:\\work\\demo-app",
+    "code": "ACCESS_DENIED",
+    "message": "denied"
+  }
+}

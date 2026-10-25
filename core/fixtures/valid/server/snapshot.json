@@ -1,0 +1,726 @@
+{
+  "type": "snapshot",
+  "currentProjectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+  "recentProjects": [
+    {
+      "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+      "name": "demo-app",
+      "path": "C:\\work\\demo-app"
+    },
+    {
+      "projectId": "9d8c7b6a-5f4e-4d3c-8b2a-19f8e7d6c5b4",
+      "name": "notes",
+      "path": "D:\\notes"
+    }
+  ],
+  "project": {
+    "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+    "name": "demo-app",
+    "path": "C:\\work\\demo-app",
+    "files": [
+      {
+        "relativePath": ".git",
+        "directory": true
+      },
+      {
+        "relativePath": "src",
+        "directory": true
+      },
+      {
+        "relativePath": "src/main.ts",
+        "directory": false
+      },
+      {
+        "relativePath": "README.md",
+        "directory": false
+      }
+    ],
+    "filesTruncated": false
+  },
+  "agents": [
+    {
+      "agent": {
+        "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+        "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+        "name": "Codex",
+        "harnessId": "codex",
+        "providerId": "openai",
+        "modelId": null,
+        "authMethodId": "chat-gpt",
+        "readiness": "configured",
+        "palette": 0,
+        "hueShift": 0,
+        "reportsToolDetails": true,
+        "reportsSubagentSessions": false
+      },
+      "status": "awaiting_permission",
+      "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+      "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "lastSeq": 20,
+      "toolCalls": [
+        {
+          "toolCallId": "call_8f2a",
+          "title": "Read README.md",
+          "kind": "read",
+          "status": "completed",
+          "locations": [
+            {
+              "path": "C:\\work\\demo-app\\README.md",
+              "line": 1
+            }
+          ]
+        },
+        {
+          "toolCallId": "call_9b1c",
+          "title": "Run git status",
+          "kind": "execute",
+          "status": "pending",
+          "locations": [],
+          "rawInput": {
+            "command": [
+              "git",
+              "status"
+            ],
+            "cwd": "C:\\work\\demo-app"
+          }
+        }
+      ],
+      "pendingPermissions": [
+        {
+          "permissionId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+          "toolCall": {
+            "toolCallId": "call_9b1c",
+            "title": "Run git status",
+            "kind": "execute",
+            "status": "pending",
+            "locations": [],
+            "rawInput": {
+              "command": [
+                "git",
+                "status"
+              ],
+              "cwd": "C:\\work\\demo-app"
+            }
+          },
+          "options": [
+            {
+              "optionId": "approved",
+              "name": "Yes, proceed",
+              "kind": "allow_once"
+            },
+            {
+              "optionId": "approved-for-session",
+              "name": "Yes, and don't ask again",
+              "kind": "allow_always"
+            },
+            {
+              "optionId": "abort",
+              "name": "No",
+              "kind": "reject_once"
+            }
+          ]
+        }
+      ],
+      "prompt": "README를 읽고 git status를 실행해 결과를 요약해",
+      "session": {
+        "agentInfo": {
+          "name": "codex-acp",
+          "version": "2.2.2",
+          "title": "Codex"
+        },
+        "modes": {
+          "currentModeId": "agent",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Auto review"
+            }
+          ]
+        },
+        "configOptions": [
+          {
+            "id": "model",
+            "category": "model",
+            "currentValue": "default"
+          }
+        ],
+        "sessionInfo": {
+          "title": "README 요약"
+        },
+        "plan": [
+          {
+            "content": "README 읽기",
+            "priority": "medium",
+            "status": "completed"
+          },
+          {
+            "content": "git status 실행",
+            "priority": "medium",
+            "status": "in_progress"
+          }
+        ],
+        "usage": {
+          "used": 18234,
+          "size": 272000
+        }
+      },
+      "authStatus": {
+        "kind": "account",
+        "label": "ChatGPT Plus"
+      },
+      "recentEvents": [
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": null,
+          "runId": null,
+          "seq": 1,
+          "receivedAt": 1792800000000,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "starting",
+            "previous": "offline"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": null,
+          "runId": null,
+          "seq": 2,
+          "receivedAt": 1792800000010,
+          "kind": "agentStarting",
+          "data": {
+            "stage": "spawn"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": null,
+          "runId": null,
+          "seq": 3,
+          "receivedAt": 1792800002400,
+          "kind": "agentStarting",
+          "data": {
+            "stage": "initialize"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": null,
+          "runId": null,
+          "seq": 4,
+          "receivedAt": 1792800002600,
+          "kind": "authStatus",
+          "data": {
+            "kind": "account",
+            "label": "ChatGPT Plus"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": null,
+          "runId": null,
+          "seq": 5,
+          "receivedAt": 1792800002610,
+          "kind": "agentStarting",
+          "data": {
+            "stage": "session_new"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": null,
+          "seq": 6,
+          "receivedAt": 1792800003000,
+          "kind": "sessionStarted",
+          "data": {
+            "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+            "agentInfo": {
+              "name": "codex-acp",
+              "version": "2.2.2",
+              "title": "Codex"
+            },
+            "modes": {
+              "currentModeId": "agent",
+              "availableModes": [
+                {
+                  "id": "agent",
+                  "name": "Auto review"
+                }
+              ]
+            },
+            "configOptions": [
+              {
+                "id": "model",
+                "category": "model",
+                "currentValue": "default"
+              }
+            ]
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": null,
+          "seq": 7,
+          "receivedAt": 1792800003000,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "ready",
+            "previous": "starting"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 8,
+          "receivedAt": 1792800005000,
+          "kind": "runStarted",
+          "data": {
+            "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+            "prompt": "README를 읽고 git status를 실행해 결과를 요약해"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 9,
+          "receivedAt": 1792800005000,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "running",
+            "previous": "ready"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 11,
+          "receivedAt": 1792800005600,
+          "kind": "toolCall",
+          "data": {
+            "toolCall": {
+              "toolCallId": "call_8f2a",
+              "title": "Read README.md",
+              "kind": "read",
+              "status": "pending",
+              "locations": [
+                {
+                  "path": "C:\\work\\demo-app\\README.md",
+                  "line": 1
+                }
+              ]
+            }
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 12,
+          "receivedAt": 1792800005850,
+          "kind": "toolCallUpdate",
+          "data": {
+            "toolCall": {
+              "toolCallId": "call_8f2a",
+              "title": "Read README.md",
+              "kind": "read",
+              "status": "completed",
+              "locations": [
+                {
+                  "path": "C:\\work\\demo-app\\README.md",
+                  "line": 1
+                }
+              ]
+            }
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 13,
+          "receivedAt": 1792800006000,
+          "kind": "plan",
+          "data": {
+            "entries": [
+              {
+                "content": "README 읽기",
+                "priority": "medium",
+                "status": "completed"
+              },
+              {
+                "content": "git status 실행",
+                "priority": "medium",
+                "status": "in_progress"
+              }
+            ]
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 15,
+          "receivedAt": 1792800006300,
+          "kind": "agentMessageChunk",
+          "data": {
+            "messageId": "msg_1",
+            "contentType": "text",
+            "text": "README를 읽었습니다. 이제 git status를 실행합니다."
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": null,
+          "seq": 16,
+          "receivedAt": 1792800006400,
+          "kind": "sessionInfo",
+          "data": {
+            "title": "README 요약"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 17,
+          "receivedAt": 1792800006500,
+          "kind": "usage",
+          "data": {
+            "used": 18234,
+            "size": 272000
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 18,
+          "receivedAt": 1792800006700,
+          "kind": "toolCall",
+          "data": {
+            "toolCall": {
+              "toolCallId": "call_9b1c",
+              "title": "Run git status",
+              "kind": "execute",
+              "status": "pending",
+              "locations": [],
+              "rawInput": {
+                "command": [
+                  "git",
+                  "status"
+                ],
+                "cwd": "C:\\work\\demo-app"
+              }
+            }
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 19,
+          "receivedAt": 1792800006800,
+          "kind": "permissionRequested",
+          "data": {
+            "permissionId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            "toolCall": {
+              "toolCallId": "call_9b1c",
+              "title": "Run git status",
+              "kind": "execute",
+              "status": "pending",
+              "locations": [],
+              "rawInput": {
+                "command": [
+                  "git",
+                  "status"
+                ],
+                "cwd": "C:\\work\\demo-app"
+              }
+            },
+            "options": [
+              {
+                "optionId": "approved",
+                "name": "Yes, proceed",
+                "kind": "allow_once"
+              },
+              {
+                "optionId": "approved-for-session",
+                "name": "Yes, and don't ask again",
+                "kind": "allow_always"
+              },
+              {
+                "optionId": "abort",
+                "name": "No",
+                "kind": "reject_once"
+              }
+            ]
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "sessionId": "8e7d6c5b-4a39-4281-9f0e-d1c2b3a4f5e6",
+          "runId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "seq": 20,
+          "receivedAt": 1792800006800,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "awaiting_permission",
+            "previous": "running"
+          }
+        }
+      ]
+    },
+    {
+      "agent": {
+        "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+        "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+        "name": "Codex (review)",
+        "harnessId": "codex",
+        "providerId": "openai",
+        "modelId": null,
+        "authMethodId": "chat-gpt",
+        "readiness": "configured",
+        "palette": 1,
+        "hueShift": 0,
+        "reportsToolDetails": true,
+        "reportsSubagentSessions": false
+      },
+      "status": "error",
+      "sessionId": null,
+      "runId": null,
+      "lastSeq": 13,
+      "toolCalls": [],
+      "pendingPermissions": [],
+      "prompt": "테스트를 실행해",
+      "lastRun": {
+        "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+        "outcome": "failed",
+        "errorCode": "PROCESS_EXITED",
+        "unfinishedToolCalls": [
+          {
+            "toolCallId": "call_3a7e",
+            "derivedStatus": "incomplete"
+          }
+        ]
+      },
+      "sessionEnd": {
+        "reason": "exited",
+        "exitCode": 1
+      },
+      "lastError": {
+        "code": "PROCESS_EXITED",
+        "stage": "running",
+        "message": "adapter exited with code 1"
+      },
+      "recentEvents": [
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": null,
+          "runId": null,
+          "seq": 1,
+          "receivedAt": 1792800000100,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "starting",
+            "previous": "offline"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": null,
+          "runId": null,
+          "seq": 2,
+          "receivedAt": 1792800000110,
+          "kind": "agentStarting",
+          "data": {
+            "stage": "spawn"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": null,
+          "runId": null,
+          "seq": 3,
+          "receivedAt": 1792800002500,
+          "kind": "agentStarting",
+          "data": {
+            "stage": "initialize"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": null,
+          "runId": null,
+          "seq": 4,
+          "receivedAt": 1792800002700,
+          "kind": "agentStarting",
+          "data": {
+            "stage": "session_new"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": null,
+          "seq": 5,
+          "receivedAt": 1792800003100,
+          "kind": "sessionStarted",
+          "data": {
+            "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+            "agentInfo": {
+              "name": "codex-acp",
+              "version": "2.2.2",
+              "title": "Codex"
+            }
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": null,
+          "seq": 6,
+          "receivedAt": 1792800003100,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "ready",
+            "previous": "starting"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+          "seq": 7,
+          "receivedAt": 1792800008000,
+          "kind": "runStarted",
+          "data": {
+            "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+            "prompt": "테스트를 실행해"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+          "seq": 8,
+          "receivedAt": 1792800008000,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "running",
+            "previous": "ready"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+          "seq": 9,
+          "receivedAt": 1792800008400,
+          "kind": "toolCall",
+          "data": {
+            "toolCall": {
+              "toolCallId": "call_3a7e",
+              "title": "Run npm test",
+              "kind": "execute",
+              "status": "in_progress",
+              "locations": []
+            }
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+          "seq": 10,
+          "receivedAt": 1792800009900,
+          "kind": "agentError",
+          "data": {
+            "code": "PROCESS_EXITED",
+            "stage": "running",
+            "message": "adapter exited with code 1"
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+          "seq": 11,
+          "receivedAt": 1792800009900,
+          "kind": "runEnded",
+          "data": {
+            "runId": "7d8e9f0a-1b2c-4d3e-9f4a-5b6c7d8e9f0a",
+            "outcome": "failed",
+            "errorCode": "PROCESS_EXITED",
+            "unfinishedToolCalls": [
+              {
+                "toolCallId": "call_3a7e",
+                "derivedStatus": "incomplete"
+              }
+            ]
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": "2f3e4d5c-6b7a-4891-8a0b-c1d2e3f4a5b6",
+          "runId": null,
+          "seq": 12,
+          "receivedAt": 1792800009900,
+          "kind": "sessionEnded",
+          "data": {
+            "reason": "exited",
+            "exitCode": 1
+          }
+        },
+        {
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "agentId": "5e4d3c2b-1a0f-4e9d-8c7b-6a5f4e3d2c1b",
+          "sessionId": null,
+          "runId": null,
+          "seq": 13,
+          "receivedAt": 1792800009900,
+          "kind": "agentStatusChanged",
+          "data": {
+            "status": "error",
+            "previous": "running"
+          }
+        }
+      ]
+    }
+  ]
+}

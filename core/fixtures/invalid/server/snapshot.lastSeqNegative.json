@@ -1,0 +1,65 @@
+{
+  "description": "lastSeq is 0 before the first event and never negative.",
+  "expect": {
+    "keyword": "minimum",
+    "instancePath": "/agents/0/lastSeq",
+    "params": {
+      "comparison": ">=",
+      "limit": 0
+    }
+  },
+  "message": {
+    "type": "snapshot",
+    "currentProjectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+    "recentProjects": [],
+    "project": {
+      "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+      "name": "demo-app",
+      "path": "C:\\work\\demo-app",
+      "files": [
+        {
+          "relativePath": ".git",
+          "directory": true
+        },
+        {
+          "relativePath": "src",
+          "directory": true
+        },
+        {
+          "relativePath": "src/main.ts",
+          "directory": false
+        },
+        {
+          "relativePath": "README.md",
+          "directory": false
+        }
+      ],
+      "filesTruncated": false
+    },
+    "agents": [
+      {
+        "agent": {
+          "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+          "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+          "name": "Codex",
+          "harnessId": "codex",
+          "providerId": "openai",
+          "modelId": null,
+          "authMethodId": "chat-gpt",
+          "readiness": "configured",
+          "palette": 0,
+          "hueShift": 0,
+          "reportsToolDetails": true,
+          "reportsSubagentSessions": false
+        },
+        "status": "offline",
+        "sessionId": null,
+        "runId": null,
+        "lastSeq": -1,
+        "toolCalls": [],
+        "pendingPermissions": [],
+        "recentEvents": []
+      }
+    ]
+  }
+}

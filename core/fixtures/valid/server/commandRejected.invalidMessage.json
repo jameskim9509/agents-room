@@ -1,0 +1,6 @@
+{
+  "type": "commandRejected",
+  "command": "unknown",
+  "reason": "INVALID_MESSAGE",
+  "message": "missing type id property"
+}

@@ -1,0 +1,30 @@
+{
+  "description": "palette is one of the six inherited palettes, 0-5.",
+  "expect": {
+    "keyword": "maximum",
+    "instancePath": "/agents/0/palette",
+    "params": {
+      "comparison": "<=",
+      "limit": 5
+    }
+  },
+  "message": {
+    "type": "agentsUpdated",
+    "agents": [
+      {
+        "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+        "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+        "name": "Codex",
+        "harnessId": "codex",
+        "providerId": "openai",
+        "modelId": null,
+        "authMethodId": "chat-gpt",
+        "readiness": "configured",
+        "palette": 6,
+        "hueShift": 0,
+        "reportsToolDetails": true,
+        "reportsSubagentSessions": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "type": "commandRejected",
+  "command": "sendPrompt",
+  "reason": "INVALID_STATE",
+  "message": "sendPrompt needs status ready; agent is offline",
+  "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d"
+}

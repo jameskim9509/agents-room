@@ -1,0 +1,14 @@
+{
+  "description": "With no open project the project field is omitted, not null.",
+  "expect": {
+    "keyword": "type",
+    "instancePath": "/project"
+  },
+  "message": {
+    "type": "snapshot",
+    "currentProjectId": null,
+    "recentProjects": [],
+    "project": null,
+    "agents": []
+  }
+}
