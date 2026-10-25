@@ -33,3 +33,4 @@ agents-room의 변경 기록이다. 형식은 [Keep a Changelog](https://keepach
 
 - 업스트림 문서 8개: `CONTEXT.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `docs/adr/0001-consent-choices-send-immediately-and-revise-as-absolute-state.md`, `docs/external-assets.md`, `docs/research/claude-harness-spawn-formats.md`, `webview-ui/README.md`. 요약과 원문 링크는 [docs/upstream.md](docs/upstream.md#은퇴한-문서)에 있다.
 - 업스트림 배포 워크플로 2개: `.github/workflows/publish-extension.yml`(Release 발행 때 VS Code 확장과 npm 게시), `.github/workflows/update-badges.yml`(배지 갱신). 이 포크에서 Release를 발행하면 업스트림 패키지 게시를 시도하기 때문이다 (SCRUM-68, [upstream.md 규칙](docs/upstream.md#남은-업스트림-흔적)).
+- 상속한 `.github/dependabot.yml`(npm·GitHub Actions 주간 버전 업데이트). 새 저장소에서 켜지자마자 업스트림 VS Code 확장 기준의 업데이트 PR 7개를 열어 Sprint 0의 PR 순서와 부딪혔다. 열린 PR은 닫았다. 데스크톱 셸과 Java 런타임(Gradle)까지 다루는 설정은 필요할 때 새로 만든다 ([upstream.md](docs/upstream.md#남은-업스트림-흔적)).
