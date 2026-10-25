@@ -1,0 +1,16 @@
+{
+  "type": "connectionChecked",
+  "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+  "readiness": "auth_required",
+  "authMethods": [
+    {
+      "id": "chat-gpt",
+      "name": "Login with ChatGPT",
+      "description": "Use your ChatGPT login with Codex CLI (requires a paid ChatGPT subscription)"
+    }
+  ],
+  "authStatus": {
+    "kind": "none",
+    "label": "Not logged in"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "description": "project is absent while currentProjectId is null (no project is open).",
+  "expect": {
+    "keyword": "not",
+    "instancePath": ""
+  },
+  "message": {
+    "type": "snapshot",
+    "currentProjectId": null,
+    "recentProjects": [],
+    "project": {
+      "projectId": "6f1c2a3e-8b4d-4e5f-9a6b-7c8d9e0f1a2b",
+      "name": "demo-app",
+      "path": "C:\\work\\demo-app",
+      "files": [
+        {
+          "relativePath": ".git",
+          "directory": true
+        },
+        {
+          "relativePath": "src",
+          "directory": true
+        },
+        {
+          "relativePath": "src/main.ts",
+          "directory": false
+        },
+        {
+          "relativePath": "README.md",
+          "directory": false
+        }
+      ],
+      "filesTruncated": false
+    },
+    "agents": []
+  }
+}

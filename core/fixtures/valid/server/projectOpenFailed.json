@@ -1,0 +1,6 @@
+{
+  "type": "projectOpenFailed",
+  "path": "C:\\work\\missing",
+  "code": "PATH_NOT_FOUND",
+  "message": "java.nio.file.NoSuchFileException: C:\\work\\missing"
+}

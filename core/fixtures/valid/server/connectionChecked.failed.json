@@ -1,0 +1,11 @@
+{
+  "type": "connectionChecked",
+  "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+  "readiness": "executable_missing",
+  "authMethods": [],
+  "error": {
+    "code": "EXECUTABLE_MISSING",
+    "stage": "spawn",
+    "message": "codex-acp is not installed: tools/adapters/node_modules/@agentclientprotocol/codex-acp/dist/index.js not found"
+  }
+}

@@ -21,7 +21,7 @@
 | 세션            | Session (ACP session), `sessionId` | 어댑터가 `session/new`로 발급하는 대화 단위다. 어댑터 프로세스 1개 안에서 열리고, 그 안에서 실행이 차례로 일어난다.                                                                                                                                                                           | SCRUM-9, 23              |
 | 실행            | Run, `runId`                       | 사용자 요청 1건, 곧 `session/prompt` 1회의 처리다([ADR 0005](adr/0005-agent-event-model.md)). Jira는 "실행"을 프로세스·세션·프롬프트 단위로 섞어 쓴다(SCRUM-23, 28, 47, 60). 이 문서 세트는 프롬프트 단위로 정하고, SCRUM-28의 "Agent 실행"은 에이전트로 읽는다.                              | SCRUM-23, 24, 28, 47, 60 |
 | Tool 호출       | Tool call, `toolCallId`            | 에이전트가 보고한 개별 동작이다(파일 읽기, 편집, 명령 실행 등). ACP `tool_call`과 `tool_call_update`로 오며 `kind`와 `status`를 가진다.                                                                                                                                                       | SCRUM-19, 27             |
-| AgentEvent      | AgentEvent                         | 로컬 런타임이 ACP 메시지와 프로세스 생명주기를 정규화한 공통 이벤트다. 렌더러는 AgentEvent와 상태 스냅샷만 받는다. 정의는 [ADR 0005](adr/0005-agent-event-model.md)에 있다.                                                                                                                   | SCRUM-11, 23, 66         |
+| AgentEvent      | AgentEvent                         | 로컬 런타임이 ACP 메시지와 프로세스 생명주기를 정규화한 공통 이벤트다. 렌더러는 AgentEvent, 상태 스냅샷, 명령 결과(`projectOpened` 등)만 받는다. 정의는 [ADR 0005](adr/0005-agent-event-model.md)에 있다.                                                                                     | SCRUM-11, 23, 66         |
 | 에이전트 상태   | Agent status                       | 캐릭터와 Detail Panel이 보여주는 상태값이다. 값과 표시는 [ux.md](ux.md#상태-어휘), 전이 규칙은 [ADR 0005](adr/0005-agent-event-model.md)에 있다.                                                                                                                                              | SCRUM-6, 11              |
 | 캐릭터          | Character                          | 픽셀 월드에서 에이전트 1개를 나타내는 스프라이트다. 상태와 행동은 AgentEvent로만 바뀐다.                                                                                                                                                                                                      | SCRUM-11, 27, 28         |
 | Detail Panel    | Detail Panel                       | 캐릭터를 선택하면 화면 오른쪽에 열리는 패널이다. 선택한 에이전트의 요청, 세션 상태, 현재 Tool, 이벤트 순서, 결과를 보여준다.                                                                                                                                                                  | SCRUM-6, 19              |
@@ -67,7 +67,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 ### Project/Workspace service
 
-- 셸이 넘긴 폴더 경로를 정규화하고, 존재하는지·읽을 수 있는지·절대 경로인지 검증한다. 실패하면 다시 고르게 하고, 렌더러가 넘긴 경로도 검증 없이 믿지 않는다 (SCRUM-18, 31).
+- 렌더러가 `openProject {path}`로 보낸 경로를 정규화하고 검증한다. 어떤 경로도 검증 없이 믿지 않는다. 검사 순서는 절대 경로인지, 존재하는지, 폴더인지, 읽을 수 있는지이고, 실패하면 `projectOpenFailed`로 그 코드(`ProjectErrorCode`, [ADR 0005](adr/0005-agent-event-model.md) 결정 8)를 알리고 다시 고르게 한다 (SCRUM-18, 31).
 - `projectId`를 발급하고 최근 프로젝트를 관리한다. 폴더가 옮겨지거나 지워졌으면 "위치 다시 지정"을 요구하고, 다른 경로에서 대신 실행하지 않는다 (SCRUM-32).
 - 최소 파일 트리를 읽기 전용, 깊이 제한으로 제공한다 (SCRUM-31). 프로젝트마다 에이전트 설정과 상태를 분리한다 (SCRUM-13).
 
@@ -91,7 +91,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 ### Event normalizer
 
-- `session/update`, 요청과 응답, 프로세스 생명주기를 AgentEvent로 바꾸고 `seq`와 `runId`를 붙인다 ([ADR 0005](adr/0005-agent-event-model.md), SCRUM-23, 66).
+- `session/update`, 요청과 응답, 프로세스 생명주기를 AgentEvent로 바꾸고 `seq`와 `runId`를 붙인다 ([ADR 0005](adr/0005-agent-event-model.md), SCRUM-23, 66). 생성된 Java `AgentEvent` 인터페이스가 envelope 필드의 getter와 setter를 선언하므로, 이벤트 종류마다 따로 처리하지 않고 붙이고 에이전트별 마지막 `seq`를 기록한다.
 - 에이전트별 현재 상태를 계산해서 상태 저장소에 반영한다. 상태 저장소가 단일 출처다. 업스트림 `AgentStateStore`의 개념을 이어받되, broadcast 메시지는 타입 검사를 한다 (SCRUM-19).
 - 알 수 없는 update는 `unknownUpdate`로, Tool 호출은 ADR 0005의 병합 규칙대로 바꾼다. 내용을 추측해서 채우지 않는다 (SCRUM-27, 50).
 
@@ -109,22 +109,23 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 ### Renderer gateway
 
-- 렌더러와 통하는 유일한 통로다. 계약은 `core/asyncapi.yaml`이고 TS와 Java 바인딩을 생성한다 (ADR 0005). 전송 방식은 ADR 0001에서 정한다 (SCRUM-8, 22).
-- 렌더러가 연결되면 상태 스냅샷을 먼저 보내고, 그다음부터 이벤트를 보낸다. 메시지 청크는 묶어서 보낼 수 있지만, 상태 전이는 하나도 빠뜨리지 않는다 (SCRUM-28).
-- 명령(목록은 ADR 0005)을 검증한다: 존재하는 `agentId`인지, 대기 중인 `permissionId`인지.
+- 렌더러와 통하는 유일한 통로다. 계약은 `core/asyncapi.yaml`이고 TS와 Java 바인딩을 생성한다 (ADR 0005 결정 11). 전송 방식은 ADR 0001에서 정한다 (SCRUM-8, 22).
+- 렌더러가 연결될 때마다(재연결 포함) `snapshot`을 먼저 보내고, 그다음부터 이벤트를 보낸다. 렌더러는 스냅샷의 `lastSeq` 이하인 이벤트를 버린다. 지난 이벤트는 다시 보내지 않으므로, 스냅샷에는 Detail Panel을 다시 그릴 값과 최근 이벤트 꼬리를 담는다 (ADR 0005 결정 2). 메시지 청크는 묶어서 보낼 수 있지만, 상태 전이는 하나도 빠뜨리지 않는다 (SCRUM-28).
+- 보내기 전에 어댑터에서 온 값과 진단 메시지를 마스킹 계층에 통과시킨다 ([ADR 0004](adr/0004-model-authentication.md) 결정 8, ADR 0005 결정 11).
+- 명령(목록은 ADR 0005)을 검증한다: 형식이 맞는지, 존재하는 `projectId`·`agentId`인지, 대기 중인 `permissionId`인지, 지금 상태에서 받을 수 있는지. 받지 않는 명령은 `commandRejected {reason}`으로 답하고 아무것도 바꾸지 않는다. 생성된 Java 클래스는 필수 필드를 강제하지 않으므로 이 검증을 gateway가 한다.
 
 ## 식별자
 
-| 식별자                     | 발급 주체                       | 범위와 수명                                                              | 용도                                                                                |
-| -------------------------- | ------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `projectId`                | 로컬 런타임 (UUID)              | 등록된 폴더 1개. 경로를 다시 지정해도 유지된다                           | 프로젝트별 설정 분리 (SCRUM-13, 32)                                                 |
-| `agentId`                  | 로컬 런타임 (UUID)              | AgentConfig 1개. 재시작해도 유지되며 캐릭터와 1:1이다                    | 이벤트와 권한 요청의 귀속 (SCRUM-28, 66)                                            |
-| `sessionId`                | ACP 어댑터 (`session/new` 응답) | 어댑터 프로세스 1개의 수명 안. 재시작하면 새 값이다                      | ACP 메시지 라우팅 (SCRUM-23)                                                        |
-| `runId`                    | 로컬 런타임 (UUID)              | `session/prompt` 1회                                                     | 늦게 온 이벤트 구분(SCRUM-24), 비정상 종료 귀속(SCRUM-47), 이력(SCRUM-52, post-MVP) |
-| `toolCallId`               | ACP 어댑터                      | 세션 안에서만 유일하다. 전역 키는 (`agentId`, `sessionId`, `toolCallId`) | Tool 상태 병합, 중복 캐릭터·애니메이션 방지 (SCRUM-27)                              |
-| `permissionId`             | 로컬 런타임 (UUID)              | 권한 요청 1건. 연결마다 따로 매겨지는 JSON-RPC 요청 id와 1:1로 대응한다  | 원래 요청에 응답 (SCRUM-33)                                                         |
-| `seq`                      | 로컬 런타임                     | 에이전트마다 단조 증가하는 수신 순번                                     | 수신 순서 보존 (SCRUM-19, 52)                                                       |
-| `workflowRunId` (post-MVP) | 로컬 런타임                     | 워크플로우 실행 1회                                                      | SCRUM-30, 44                                                                        |
+| 식별자                     | 발급 주체                       | 범위와 수명                                                                    | 용도                                                                                |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `projectId`                | 로컬 런타임 (UUID)              | 등록된 폴더 1개. 경로를 다시 지정해도 유지된다                                 | 프로젝트별 설정 분리 (SCRUM-13, 32)                                                 |
+| `agentId`                  | 로컬 런타임 (UUID)              | AgentConfig 1개. 재시작해도 유지되며 캐릭터와 1:1이다                          | 이벤트와 권한 요청의 귀속 (SCRUM-28, 66)                                            |
+| `sessionId`                | ACP 어댑터 (`session/new` 응답) | 어댑터 프로세스 1개의 수명 안. 재시작하면 새 값이다                            | ACP 메시지 라우팅 (SCRUM-23)                                                        |
+| `runId`                    | 로컬 런타임 (UUID)              | `session/prompt` 1회                                                           | 늦게 온 이벤트 구분(SCRUM-24), 비정상 종료 귀속(SCRUM-47), 이력(SCRUM-52, post-MVP) |
+| `toolCallId`               | ACP 어댑터                      | 세션 안에서만 유일하다. 전역 키는 (`agentId`, `sessionId`, `toolCallId`)       | Tool 상태 병합, 중복 캐릭터·애니메이션 방지 (SCRUM-27)                              |
+| `permissionId`             | 로컬 런타임 (UUID)              | 권한 요청 1건. 연결마다 따로 매겨지는 JSON-RPC 요청 id와 1:1로 대응한다        | 원래 요청에 응답 (SCRUM-33)                                                         |
+| `seq`                      | 로컬 런타임                     | 에이전트마다 1부터 단조 증가하는 수신 순번. 스냅샷의 `lastSeq`가 마지막 값이다 | 수신 순서 보존, 재연결 뒤 중복 제거 (SCRUM-19, 52)                                  |
+| `workflowRunId` (post-MVP) | 로컬 런타임                     | 워크플로우 실행 1회                                                            | SCRUM-30, 44                                                                        |
 
 - 렌더러는 JSON-RPC 요청 id를 보지 않는다. ACP가 발급한 ID(`sessionId`, `toolCallId`)는 불투명한 문자열로 다룬다.
 - 실행 밖에서 온 세션 단위 update(예: `available_commands_update`)는 `runId = null`이다.
@@ -138,12 +139,12 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 1. 사용자가 프로젝트 열기를 요청하면 셸이 OS 폴더 선택기를 연다. 취소하면 아무것도 바뀌지 않는다 (SCRUM-18, 31).
 2. 고른 경로가 `openProject`로 런타임에 전달된다 (전달 경로는 ADR 0001).
-3. Project/Workspace service가 경로를 검증하고, `projectId`를 발급하고, 최근 목록을 갱신한다. 실패하면 오류를 보내고 다시 고르게 한다.
-4. 렌더러에 프로젝트 이름, 경로, 최소 파일 트리를 보낸다.
+3. Project/Workspace service가 경로를 검증하고, `projectId`를 발급하고, 최근 목록을 갱신한다. 실패하면 `projectOpenFailed {code}`를 보내고 다시 고르게 한다.
+4. 렌더러에 `projectOpened`(프로젝트 이름, 경로, 최소 파일 트리)를 보내고, 이어서 그 프로젝트의 에이전트 목록(`agentsUpdated`)을 보낸다.
 
 ### 에이전트 시작
 
-1. `startAgent {agentId}`를 받으면 AgentConfig를 확인하고 명령과 env를 구성한다. 상태는 `starting`이고, 아래 단계 중 하나가 실패하면 `error`가 된다 (SCRUM-23, 66).
+1. `startAgent {agentId}`를 받으면 AgentConfig를 확인하고 명령과 env를 구성한다. 상태는 `starting`이고, 아래 단계 중 하나가 실패하면 어댑터 프로세스 트리를 끝내고 `error`가 된다 (SCRUM-23, 66).
 2. 어댑터 프로세스를 실행한다 (`cwd` = 프로젝트 경로).
 3. `initialize`(`protocolVersion` 1, client capability)를 보내 버전을 확인하고, 인증을 확인한다 ([ADR 0004](adr/0004-model-authentication.md)).
 4. `session/new {cwd: 절대 경로, mcpServers: []}`로 받은 `sessionId`를 `agentId`에 묶고 `ready`가 된다.
@@ -171,8 +172,8 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 ### 비정상 종료
 
 1. Process supervisor가 요청하지 않은 프로세스 종료를 감지한다 (종료 코드, 시그널, SCRUM-47).
-2. 진행 중인 실행이 있었으면 `runEnded {outcome: failed}`를 낸다. 완료로 표시하지 않는다.
-3. `sessionEnded {reason: exited}`를 내고 상태는 `error`가 된다. GUI는 계속 돈다 (SCRUM-22).
+2. 진행 중인 실행이 있었으면 `runEnded {outcome: failed}`를 낸다. 완료로 표시하지 않는다. 대기 중인 권한 요청은 `permissionResolved {outcome: cancelled}`로 닫는다.
+3. 세션이 있었으면 `sessionEnded {reason: exited}`를 낸다. 상태는 `error`가 되고, GUI는 계속 돈다 (SCRUM-22).
 4. 다시 시작하면 새 프로세스, 새 세션이다. 이전 세션을 이어간다고 표시하지 않고, 자동 재시작을 무한히 반복하지 않는다.
 
 ### 앱 종료
@@ -186,7 +187,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 판정은 계획이다. 파일 단위 판정과 이유는 [upstream.md](upstream.md#상속-범위)에만 있다.
 
 - 그대로 쓴다: 픽셀 월드(`webview-ui/src/office/`의 엔진·레이아웃·에디터·스프라이트, `OfficeCanvas.tsx`), `WebSocketTransport`, `core/src/transport.ts` 같은 렌더러 공용 코드.
-- 고쳐 쓴다: 렌더러의 메시지 처리(`useExtensionMessages.ts`, `toolUtils.ts`)와 전송 분기(`transport/index.ts`), 계약(`core/asyncapi.yaml`, ADR 0005), e2e.
+- 고쳐 쓴다: 렌더러의 메시지 처리(`useExtensionMessages.ts`, `toolUtils.ts`)와 전송 분기(`transport/index.ts`), 계약(`core/asyncapi.yaml`, ADR 0005), e2e. 계약에는 agents-room 프레임과 명령을 상속 프레임 옆에 더했다. 상속 프레임은 `x-legacy: true`이고, `server/`와 `adapters/vscode/`를 지울 때 함께 지운다.
 - 개념만 옮긴다: `server/`(Node/Fastify)는 Java로 다시 구현하고 상태 저장소, 연결 시 스냅샷, 원자적 저장 같은 구조만 가져온다 ([ADR 0002](adr/0002-java-spring-runtime.md)).
 - 버린다: Claude hooks와 JSONL 처리(`server/src/providers/hook/**`, `fileWatcher.ts`, `transcriptParser.ts`), `adapters/vscode/**`.
 - 새로 만든다: Detail Panel, 권한 대화상자, 에이전트 설정 화면([ux.md](ux.md#화면-구성)), 데스크톱 셸, Java 런타임.

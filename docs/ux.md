@@ -63,7 +63,7 @@ Detail Panel은 위에서 아래로 다음 순서다.
 | `running`                   | 실행 중   | 실행(Run)이 진행 중이다                                            | 자리에서 [행동 매핑](#행동-매핑)의 애니메이션. 보고된 Tool 호출이 없으면 범용 작업 표시                                       | "현재 Tool". 보고된 Tool 호출이 없으면 "상태 정보 없음"     |
 | `awaiting_permission`       | 승인 대기 | 답하지 않은 권한 요청이 1개 이상 있다                              | "..." 권한 말풍선 (amber, 응답할 때까지 유지)                                                                                 | 대기 중인 권한 요청과 대화상자 다시 열기                    |
 | `cancelling`                | 중지 중   | `session/cancel`을 보냈고 `session/prompt` 응답을 기다린다         | 마지막 행동을 멈춘다                                                                                                          | "중지 중"                                                   |
-| `error`                     | 오류      | 시작 실패 또는 요청하지 않은 프로세스 종료. 사용자 조치가 필요하다 | 오류 말풍선                                                                                                                   | 원인 코드의 문구와 조치                                     |
+| `error`                     | 오류      | 시작 실패·요청하지 않은 종료·잘못된 ACP 메시지 (프로세스는 끝났다) | 오류 말풍선                                                                                                                   | 원인 코드의 문구와 조치                                     |
 | `disconnected` (post-MVP)   | 연결 끊김 | 전송 계층이 끊겼다 (SCRUM-48)                                      | post-MVP에서 정한다                                                                                                           | post-MVP에서 정한다                                         |
 
 | 실행 결과 `RunOutcome` | 라벨      | 캐릭터 표현                       | Detail Panel                                  |
@@ -108,8 +108,8 @@ Detail Panel은 위에서 아래로 다음 순서다.
 
 - **R1** 표시하는 활동은 ACP에서 확인한 것뿐이다 (SCRUM-19, 21, 23).
 - **R2** Plan은 어댑터가 `plan`을 보낼 때만 보여주고, 계획을 지어내지 않는다 (SCRUM-19). 우선순위는 표시하지 않는다. codex-acp가 `medium`으로 고정해서 보내기 때문이다 (2026-10-20 기준).
-- **R3** 실행기가 Tool 상세를 보내지 않는다고 확인된 경우에만 "이 실행기는 세부 활동을 제공하지 않습니다"를 쓴다 (SCRUM-19). 아직 이벤트가 오지 않았을 뿐이면 R5를 따른다.
-- **R4** 서브에이전트(Sub-agent) 캐릭터는 post-MVP다 (SCRUM-56). 그때도 ACP가 검증된 부모·자식 세션 ID를 보고할 때만 만든다 (SCRUM-21). MVP에서는 Agent나 Task Tool 호출을 일반 Tool 호출로 보여주고 "하위 Agent 정보 미제공" 또는 "일부 활동만 관찰 가능"을 쓴다 (SCRUM-21, 66). 규칙은 [ADR 0005](adr/0005-agent-event-model.md) 결정 10에 있다.
+- **R3** 실행기 카탈로그가 Tool 상세를 보내지 않는다고 적은 실행기(`AgentSummary.reportsToolDetails: false`)에만 "이 실행기는 세부 활동을 제공하지 않습니다"를 쓴다 (SCRUM-19). 실행을 관찰해서 판단하지 않는다. 아직 이벤트가 오지 않았을 뿐이면 R5를 따른다.
+- **R4** 서브에이전트(Sub-agent) 캐릭터는 post-MVP다 (SCRUM-56). 그때도 ACP가 검증된 부모·자식 세션 ID를 보고할 때만 만든다 (SCRUM-21). MVP에서는 Agent나 Task Tool 호출을 일반 Tool 호출로 보여준다. 카탈로그가 자식 세션을 보고하지 않는다고 적은 실행기(`reportsSubagentSessions: false`)는 Detail Panel에 늘 "하위 Agent 정보 미제공"과 "일부 활동만 관찰 가능"을 쓴다. Tool 제목으로 하위 Agent를 추측하지 않는다 (SCRUM-21, 66). 규칙은 [ADR 0005](adr/0005-agent-event-model.md) 결정 10에 있다.
 - **R5** 이벤트가 없으면 행동을 지어내지 않고 "상태 정보 없음"을 쓴다 (SCRUM-27).
 - **R6** kind나 status가 없으면 "미지정"으로 쓴다. 기본값을 사실처럼 보여주지 않는다 (SCRUM-19).
 - **R7** 실행 중에 프로세스가 끝나면 절대 "완료"로 표시하지 않는다 (SCRUM-23, 47).
@@ -133,10 +133,6 @@ Detail Panel은 위에서 아래로 다음 순서다.
 - 레이아웃은 기본 사무실을 쓴다. 레이아웃 편집기(SCRUM-59)와 테마(SCRUM-60)는 post-MVP다.
 - 펫, 카펫, 인트로 투어는 상속한 그대로 유지한다 (2026-10-23 팀 결정). 펫은 장식이며 에이전트 상태를 나타내지 않는다. 인트로 투어는 hooks 동의 단계를 빼고 온보딩(프로젝트 열기, 에이전트 추가, Codex 로그인 안내)으로 바꾼다 ([upstream.md](upstream.md#상속-범위)). Areas는 정하지 않았으므로 MVP 범위에 넣지 않는다.
 - 상속 범위는 [upstream.md#상속-범위](upstream.md#상속-범위), 크레딧(캐릭터 JIK-A-4, 폰트 NZWStudios2024)은 [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)에 있다.
-
-## 열린 질문
-
-- R3에서 "Tool 상세를 보내지 않는다"를 무엇으로 확인할지 (실행기 카탈로그에 적을지, 실행을 관찰해 판단할지).
 
 ## 문구 목록
 
@@ -178,3 +174,12 @@ Jira 원문은 글자 그대로 쓴다. 같은 동작에 스토리마다 다른 
 | `BEDROCK_ACCESS_DENIED`                                                                                                          | Bedrock 모델 접근 거부. 필요한 IAM 권한 이름을 함께 보여준다 | SCRUM-25, 34             |
 | `CHECK_UNAVAILABLE`                                                                                                              | 검사 불가                                                    | SCRUM-49                 |
 | 나머지: `AWS_CREDENTIALS_UNAVAILABLE`, `AWS_CREDENTIALS_INVALID`, `BEDROCK_MODEL_UNAVAILABLE`, `NETWORK`, `THROTTLED`, `TIMEOUT` | 구현할 때 정한다                                             | —                        |
+
+프로젝트 열기 실패(`projectOpenFailed`)의 코드별 문구다. 코드와 검사 순서는 [ADR 0005](adr/0005-agent-event-model.md) 결정 8에 있다. 문구 뒤에는 "다른 폴더를 선택하세요"(제안)를 붙이고 폴더 선택을 다시 열 수 있게 한다 (SCRUM-18, 31).
+
+| code                 | 문구                          | 근거 |
+| -------------------- | ----------------------------- | ---- |
+| `PATH_NOT_ABSOLUTE`  | 폴더 경로가 올바르지 않습니다 | 제안 |
+| `PATH_NOT_FOUND`     | 폴더를 찾을 수 없습니다       | 제안 |
+| `PATH_NOT_DIRECTORY` | 폴더가 아닙니다               | 제안 |
+| `PATH_NOT_READABLE`  | 폴더를 읽을 수 없습니다       | 제안 |

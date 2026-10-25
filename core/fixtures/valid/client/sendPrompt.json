@@ -1,0 +1,5 @@
+{
+  "type": "sendPrompt",
+  "agentId": "0b9a8c7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d",
+  "text": "README를 읽고 git status를 실행해 결과를 요약해"
+}

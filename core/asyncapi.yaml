@@ -1,10 +1,28 @@
 # NOTE: pinned to 3.0.0 deliberately. @asyncapi/modelina v5.10.1 hardcodes
 # `supportedVersions: ['3.0.0']` in its AsyncAPIInputProcessor. Bumping to
 # 3.1.0 makes Modelina fall through to a generic JSON-schema parser that emits
-# only `export type Root = any` instead of our 52 named interfaces. Bump when
+# only `export type Root = any` instead of our named interfaces. Bump when
 # Modelina adds 3.1.0 support; the upgrade is `npx asyncapi convert` + a regen.
 # `npm run asyncapi:validate` will keep emitting an info note recommending 3.1.0;
 # that's expected and harmless until Modelina catches up.
+#
+# agents-room (docs/adr/0005-agent-event-model.md): the runtime frames and
+# commands live in the same two unions as the inherited pixel-agents ones.
+# Every inherited frame carries `x-legacy: true`; they are deleted together with
+# server/ and adapters/vscode/. TS bindings (core/src/messages.ts) cover both;
+# Java bindings (`npm run asyncapi:generate:java`) cover only non-legacy frames.
+# Fixtures for the agents-room frames live in core/fixtures/ (`npm run contract:check`).
+# Modeling rules for agents-room schemas:
+# - every object: `additionalProperties: false`; discriminator `const` + listed in `required`
+# - an absent optional field means "not reported": it is omitted, never sent as null
+# - nullable only for plain strings (`[string, 'null']`); never a nullable enum or `$ref`
+# - every reusable shape and enum is a named schema (stable class names in Java)
+# - masking: every value the adapter reported, and every diagnostic `message`,
+#   passes the ADR 0004 masking layer before the runtime sends it. The rule
+#   covers all of them; this list is only examples: tool titles, locations,
+#   content, rawInput, rawOutput, vendorMeta, chunk text, plan entries, session
+#   titles, available commands, permission option names, agentInfo, auth
+#   method names, modes, configOptions, AuthStatus.label
 asyncapi: 3.0.0
 info:
   title: Pixel Agents Protocol
@@ -19,6 +37,13 @@ info:
     The protocol is provider-agnostic: a HookProvider implementation defines how raw
     CLI events are normalized to the AgentEvent shape, which the server translates
     into ServerMessage broadcasts.
+
+    agents-room adds the frames between its local runtime (Java/Spring) and the
+    renderer (ADR 0005). On every WebSocket connect the runtime sends `snapshot`
+    first, then result frames and `agentEvent` frames. The renderer sends the
+    commands `openProject`, `startAgent`, `stopAgent`, `sendPrompt`,
+    `checkConnection`, `respondPermission`, `cancelRun`, `relocateProject` and
+    `saveAgentConfig`.
   license:
     name: MIT
   contact:
@@ -85,7 +110,7 @@ components:
         - $ref: '#/components/schemas/AgentSelected'
         - $ref: '#/components/schemas/ExistingAgents'
         # Agent status / tool activity
-        - $ref: '#/components/schemas/AgentStatus'
+        - $ref: '#/components/schemas/LegacyAgentStatus'
         - $ref: '#/components/schemas/AgentToolStart'
         - $ref: '#/components/schemas/AgentToolDone'
         - $ref: '#/components/schemas/AgentToolsClear'
@@ -118,6 +143,14 @@ components:
         - $ref: '#/components/schemas/WorkspaceFolders'
         # Diagnostics
         - $ref: '#/components/schemas/AgentDiagnostics'
+        # agents-room runtime frames (ADR 0005)
+        - $ref: '#/components/schemas/Snapshot'
+        - $ref: '#/components/schemas/ProjectOpened'
+        - $ref: '#/components/schemas/ProjectOpenFailed'
+        - $ref: '#/components/schemas/AgentsUpdated'
+        - $ref: '#/components/schemas/ConnectionChecked'
+        - $ref: '#/components/schemas/CommandRejected'
+        - $ref: '#/components/schemas/AgentEventMessage'
       discriminator: type
 
     ClientMessage:
@@ -144,11 +177,22 @@ components:
         - $ref: '#/components/schemas/SaveAreaMappings'
         - $ref: '#/components/schemas/SetShowAreas'
         - $ref: '#/components/schemas/RequestDiagnostics'
+        # agents-room runtime commands (ADR 0005)
+        - $ref: '#/components/schemas/OpenProject'
+        - $ref: '#/components/schemas/RelocateProject'
+        - $ref: '#/components/schemas/SaveAgentConfig'
+        - $ref: '#/components/schemas/CheckConnection'
+        - $ref: '#/components/schemas/StartAgent'
+        - $ref: '#/components/schemas/StopAgent'
+        - $ref: '#/components/schemas/SendPrompt'
+        - $ref: '#/components/schemas/CancelRun'
+        - $ref: '#/components/schemas/RespondPermission'
       discriminator: type
 
     # ── Server message variants ────────────────────────────────────
 
     ProviderCapabilities:
+      x-legacy: true
       description: |
         Sent once after `webviewReady`, before any agent messages. Tells the client
         which tool names should render with the "reading" animation and which spawn
@@ -171,6 +215,7 @@ components:
           description: Tool names that spawn sub-agent characters (e.g. Task, Agent).
 
     AgentCreated:
+      x-legacy: true
       description: A new agent has appeared in the office.
       type: object
       additionalProperties: false
@@ -192,6 +237,7 @@ components:
           description: Server-assigned hue shift in degrees (0-360).
 
     AgentClosed:
+      x-legacy: true
       description: An agent has been removed from the office.
       type: object
       additionalProperties: false
@@ -203,6 +249,7 @@ components:
           type: integer
 
     AgentSelected:
+      x-legacy: true
       description: An agent's terminal was focused (VS Code only). UI should highlight it.
       type: object
       additionalProperties: false
@@ -214,6 +261,7 @@ components:
           type: integer
 
     ExistingAgents:
+      x-legacy: true
       description: |
         Snapshot of all current agents. Sent on initial connect and after agent set
         changes that the client missed. Includes seat/palette assignments.
@@ -243,7 +291,8 @@ components:
           additionalProperties:
             type: boolean
 
-    AgentStatus:
+    LegacyAgentStatus:
+      x-legacy: true
       description: Active vs waiting state for an agent (drives character animation).
       type: object
       additionalProperties: false
@@ -268,6 +317,7 @@ components:
       enum: [active, waiting]
 
     AgentToolStart:
+      x-legacy: true
       description: Agent began executing a tool.
       type: object
       additionalProperties: false
@@ -296,6 +346,7 @@ components:
             for it — a teammate character will represent the spawn instead.
 
     AgentToolDone:
+      x-legacy: true
       description: Agent finished executing a tool.
       type: object
       additionalProperties: false
@@ -309,6 +360,7 @@ components:
           type: string
 
     AgentToolsClear:
+      x-legacy: true
       description: All foreground tools cleared (turn end). Background agents preserved.
       type: object
       additionalProperties: false
@@ -320,6 +372,7 @@ components:
           type: integer
 
     AgentToolPermission:
+      x-legacy: true
       description: Permission prompt detected for the agent's current tool.
       type: object
       additionalProperties: false
@@ -331,6 +384,7 @@ components:
           type: integer
 
     AgentToolPermissionClear:
+      x-legacy: true
       description: Permission prompt resolved.
       type: object
       additionalProperties: false
@@ -342,6 +396,7 @@ components:
           type: integer
 
     SubagentToolStart:
+      x-legacy: true
       description: Sub-agent (e.g. Task) started a tool.
       type: object
       additionalProperties: false
@@ -359,6 +414,7 @@ components:
           type: string
 
     SubagentToolDone:
+      x-legacy: true
       description: Sub-agent finished a tool.
       type: object
       additionalProperties: false
@@ -374,6 +430,7 @@ components:
           type: string
 
     SubagentClear:
+      x-legacy: true
       description: A sub-agent task completed.
       type: object
       additionalProperties: false
@@ -387,6 +444,7 @@ components:
           type: string
 
     SubagentToolPermission:
+      x-legacy: true
       description: Permission prompt for a sub-agent's tool.
       type: object
       additionalProperties: false
@@ -400,6 +458,7 @@ components:
           type: string
 
     AgentTeamInfo:
+      x-legacy: true
       description: Agent Teams metadata (lead, teammate, tmux usage).
       type: object
       additionalProperties: false
@@ -421,6 +480,7 @@ components:
           type: boolean
 
     AgentContextUsage:
+      x-legacy: true
       description: |
         How much of the agent's context window is in use, as of its most recent
         turn. A snapshot, NOT a running total: it falls when the session
@@ -443,6 +503,7 @@ components:
           type: integer
 
     LayoutLoaded:
+      x-legacy: true
       description: |
         Office layout (tiles, furniture, colors). `null` when no layout file or
         bundled default exists. `wasReset` is true when the bundled default
@@ -465,6 +526,7 @@ components:
           type: boolean
 
     FurnitureAssetsLoaded:
+      x-legacy: true
       description: Furniture catalog and sprite data, sent once after webviewReady.
       type: object
       additionalProperties: false
@@ -487,6 +549,7 @@ components:
                 type: string
 
     CharacterSpritesLoaded:
+      x-legacy: true
       description: Pre-colored character sprite sets (6 palettes), sent once at startup.
       type: object
       additionalProperties: false
@@ -500,6 +563,7 @@ components:
             $ref: '#/components/schemas/CharacterSpriteSet'
 
     PetSpritesLoaded:
+      x-legacy: true
       description: Pet sprite frame sets and display names, sent once after webviewReady (between characterSpritesLoaded and floorTilesLoaded).
       type: object
       additionalProperties: false
@@ -571,6 +635,7 @@ components:
                 type: string
 
     FloorTilesLoaded:
+      x-legacy: true
       description: Floor tile sprites (7 patterns).
       type: object
       additionalProperties: false
@@ -589,6 +654,7 @@ components:
                 type: string
 
     WallTilesLoaded:
+      x-legacy: true
       description: Wall auto-tile sprite sets (16 bitmask pieces).
       type: object
       additionalProperties: false
@@ -609,6 +675,7 @@ components:
                   type: string
 
     CarpetTilesLoaded:
+      x-legacy: true
       description: Carpet auto-tile sprite sets (16 marching-squares pieces per variant).
       type: object
       additionalProperties: false
@@ -629,6 +696,7 @@ components:
                   type: string
 
     SettingsLoaded:
+      x-legacy: true
       description: All persisted user-level settings, sent once on connect.
       type: object
       additionalProperties: false
@@ -671,6 +739,7 @@ components:
           type: boolean
 
     HooksStatus:
+      x-legacy: true
       description: |
         Actual hook installation state, as opposed to the hooksEnabled
         preference in SettingsLoaded. The two can disagree: hooksEnabled
@@ -694,6 +763,7 @@ components:
           type: boolean
 
     HooksConsentRequest:
+      x-legacy: true
       description: |
         Ask this client to run the first-run hooks consent dialog. Sent during the
         `webviewReady` handshake when the hooks preference is on, consent has not
@@ -729,6 +799,7 @@ components:
             paragraphs separated by blank lines.
 
     AreaMappingsLoaded:
+      x-legacy: true
       description: |
         Workspace-folder-to-Area mappings. Folder names map to one or more Area
         labels; new agents from that folder prefer seats inside those Areas.
@@ -747,6 +818,7 @@ components:
               type: string
 
     ExternalAssetDirectoriesUpdated:
+      x-legacy: true
       description: External asset directory list changed (after add/remove).
       type: object
       additionalProperties: false
@@ -760,6 +832,7 @@ components:
             type: string
 
     WorkspaceFolders:
+      x-legacy: true
       description: Multi-root workspace folders (VS Code only).
       type: object
       additionalProperties: false
@@ -773,6 +846,7 @@ components:
             $ref: '#/components/schemas/WorkspaceFolder'
 
     AgentDiagnostics:
+      x-legacy: true
       description: Connection diagnostics for all agents (response to requestDiagnostics).
       type: object
       additionalProperties: false
@@ -789,6 +863,7 @@ components:
     # ── Client message variants ────────────────────────────────────
 
     WebviewReady:
+      x-legacy: true
       description: Client signals it's ready to receive state.
       type: object
       additionalProperties: false
@@ -798,6 +873,7 @@ components:
           const: webviewReady
 
     LaunchAgent:
+      x-legacy: true
       description: Launch a new Claude agent in a new terminal.
       type: object
       additionalProperties: false
@@ -812,6 +888,7 @@ components:
           type: boolean
 
     FocusAgent:
+      x-legacy: true
       description: Focus an agent's terminal.
       type: object
       additionalProperties: false
@@ -823,6 +900,7 @@ components:
           type: integer
 
     CloseAgent:
+      x-legacy: true
       description: Close (dismiss) an agent.
       type: object
       additionalProperties: false
@@ -834,6 +912,7 @@ components:
           type: integer
 
     SaveAgentSeats:
+      x-legacy: true
       description: Persist seat assignments for current agents.
       type: object
       additionalProperties: false
@@ -848,6 +927,7 @@ components:
             $ref: '#/components/schemas/SeatAssignment'
 
     SaveLayout:
+      x-legacy: true
       description: Save the office layout to ~/.pixel-agents/layout.json.
       type: object
       additionalProperties: false
@@ -860,6 +940,7 @@ components:
           description: Opaque layout object; format owned by the rendering layer.
 
     SetSoundEnabled:
+      x-legacy: true
       type: object
       additionalProperties: false
       required: [type, enabled]
@@ -870,6 +951,7 @@ components:
           type: boolean
 
     SetLastSeenVersion:
+      x-legacy: true
       type: object
       additionalProperties: false
       required: [type, version]
@@ -880,6 +962,7 @@ components:
           type: string
 
     SetAlwaysShowLabels:
+      x-legacy: true
       type: object
       additionalProperties: false
       required: [type, enabled]
@@ -890,6 +973,7 @@ components:
           type: boolean
 
     SetGhostHeadlessAgents:
+      x-legacy: true
       description: >-
         Toggle translucent rendering for headless agents (adopted sessions with no
         terminal to focus).
@@ -903,6 +987,7 @@ components:
           type: boolean
 
     SetHooksEnabled:
+      x-legacy: true
       type: object
       additionalProperties: false
       required: [type, providerId, enabled]
@@ -919,6 +1004,7 @@ components:
           type: boolean
 
     HooksConsentResponse:
+      x-legacy: true
       description: |
         The user's answer to `hooksConsentRequest` — an ABSOLUTE statement of
         the state the user wants, revisable from the Intro's closing step. Only
@@ -959,6 +1045,7 @@ components:
       enum: [install, notNow, never]
 
     SetHooksInfoShown:
+      x-legacy: true
       type: object
       additionalProperties: false
       required: [type]
@@ -967,6 +1054,7 @@ components:
           const: setHooksInfoShown
 
     SetWatchAllSessions:
+      x-legacy: true
       type: object
       additionalProperties: false
       required: [type, enabled]
@@ -977,6 +1065,7 @@ components:
           type: boolean
 
     ExportLayout:
+      x-legacy: true
       description: Trigger layout export via host-native save dialog.
       type: object
       additionalProperties: false
@@ -986,6 +1075,7 @@ components:
           const: exportLayout
 
     ImportLayout:
+      x-legacy: true
       description: Trigger layout import via host-native open dialog.
       type: object
       additionalProperties: false
@@ -995,6 +1085,7 @@ components:
           const: importLayout
 
     OpenSessionsFolder:
+      x-legacy: true
       description: Open ~/.claude/projects in the OS file manager.
       type: object
       additionalProperties: false
@@ -1004,6 +1095,7 @@ components:
           const: openSessionsFolder
 
     AddExternalAssetDirectory:
+      x-legacy: true
       description: >-
         Add an external asset directory. In VS Code the host shows a native
         directory picker and omits `path`; the standalone browser has no native
@@ -1019,6 +1111,7 @@ components:
           description: Absolute directory path (standalone browser only; omitted in VS Code).
 
     RemoveExternalAssetDirectory:
+      x-legacy: true
       description: Remove an external asset directory by path.
       type: object
       additionalProperties: false
@@ -1030,6 +1123,7 @@ components:
           type: string
 
     SaveAreaMappings:
+      x-legacy: true
       description: Persist folder-to-Area mappings for seat assignment.
       type: object
       additionalProperties: false
@@ -1045,6 +1139,7 @@ components:
               type: string
 
     SetShowAreas:
+      x-legacy: true
       description: Toggle the Areas overlay (translucent rendering on top of the office).
       type: object
       additionalProperties: false
@@ -1056,6 +1151,7 @@ components:
           type: boolean
 
     RequestDiagnostics:
+      x-legacy: true
       description: Request agent connection diagnostics (server responds with agentDiagnostics).
       type: object
       additionalProperties: false
@@ -1196,3 +1292,1298 @@ components:
           type: string
         frame:
           type: integer
+
+    # ══ agents-room runtime frames (ADR 0005) ════════════════════════
+    # Not legacy. The Java runtime serves exactly these; Java bindings are
+    # generated from them only. Every frame, command and AgentEvent kind has a
+    # valid fixture in core/fixtures/valid/ (checked by `npm run contract:check`).
+
+    # ── Server frames ──────────────────────────────────────────────
+
+    Snapshot:
+      description: >-
+        Full runtime state, sent first on every WebSocket connect (ADR 0005
+        decision 2). The renderer replaces its state with it, then ignores
+        agentEvent frames whose seq is <= that agent's lastSeq. Events are never
+        resent, so everything the Detail Panel shows is in AgentSnapshot. `project` is
+        present exactly when currentProjectId is not null; `agents` lists that
+        project's agents (empty when no project is open).
+      type: object
+      additionalProperties: false
+      required: [type, currentProjectId, recentProjects, agents]
+      properties:
+        type:
+          const: snapshot
+        currentProjectId:
+          type: [string, 'null']
+        recentProjects:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecentProject'
+        project:
+          $ref: '#/components/schemas/ProjectInfo'
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentSnapshot'
+      # The TS and Java types keep project optional and agents unbounded; ajv
+      # (contract:check) checks both rules. With no project open, neither
+      # `project` nor an agent may be present. Both sit inside `not`: Modelina
+      # merges a typed else branch into the bindings, but never reads an untyped
+      # `not`.
+      if:
+        properties:
+          currentProjectId:
+            type: string
+      then:
+        required: [project]
+      else:
+        not:
+          anyOf:
+            - required: [project]
+            - properties:
+                agents:
+                  type: array
+                  minItems: 1
+
+    ProjectOpened:
+      description: >-
+        openProject succeeded. The project becomes the current one (one active
+        project) and an agentsUpdated frame for it follows.
+      type: object
+      additionalProperties: false
+      required: [type, project]
+      properties:
+        type:
+          const: projectOpened
+        project:
+          $ref: '#/components/schemas/ProjectInfo'
+
+    ProjectOpenFailed:
+      description: >-
+        openProject failed validation; nothing changed. The renderer shows copy
+        keyed by `code` (ux.md) and lets the user pick again. `path` echoes the
+        request; `message` is masked diagnostic detail, not UI copy.
+      type: object
+      additionalProperties: false
+      required: [type, path, code, message]
+      properties:
+        type:
+          const: projectOpenFailed
+        path:
+          type: string
+        code:
+          $ref: '#/components/schemas/ProjectErrorCode'
+        message:
+          type: string
+
+    AgentsUpdated:
+      description: >-
+        The complete agent list of the current project; replaces the previous
+        list. It carries no status: an agent the renderer has not seen yet is
+        `offline` until an agentStatusChanged event says otherwise.
+      type: object
+      additionalProperties: false
+      required: [type, agents]
+      properties:
+        type:
+          const: agentsUpdated
+        agents:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentSummary'
+
+    ConnectionChecked:
+      description: >-
+        Result of checkConnection (spawn + initialize only, ADR 0004).
+        `authMethods` are the adapter's choices minus the ones agents-room hides
+        (api-key). `authStatus` is present when the adapter reported one,
+        `error` when the check failed: its `stage` says which step failed and
+        its `message` carries the cause (e.g. which executable is missing).
+      type: object
+      additionalProperties: false
+      required: [type, agentId, readiness, authMethods]
+      properties:
+        type:
+          const: connectionChecked
+        agentId:
+          type: string
+        readiness:
+          $ref: '#/components/schemas/Readiness'
+        authMethods:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuthMethodInfo'
+        authStatus:
+          $ref: '#/components/schemas/AuthStatus'
+        error:
+          $ref: '#/components/schemas/AgentErrorData'
+
+    CommandRejected:
+      description: >-
+        The runtime refused a command before acting on it; nothing changed.
+        `command` is the rejected command's `type` (`unknown` when it had none).
+        `agentId`, `projectId` and `permissionId` echo the ids the command
+        carried, so the renderer can route the rejection to its card or dialog;
+        `agentId` is also set when the runtime knows the agent of a named
+        permission. `message` is masked diagnostic detail, not UI copy.
+      type: object
+      additionalProperties: false
+      required: [type, command, reason, message]
+      properties:
+        type:
+          const: commandRejected
+        command:
+          type: string
+        reason:
+          $ref: '#/components/schemas/RejectReason'
+        message:
+          type: string
+        agentId:
+          type: string
+        projectId:
+          type: string
+        permissionId:
+          type: string
+
+    AgentEventMessage:
+      description: One AgentEvent (ADR 0005 decision 1).
+      type: object
+      additionalProperties: false
+      required: [type, event]
+      properties:
+        type:
+          const: agentEvent
+        event:
+          $ref: '#/components/schemas/AgentEvent'
+
+    # ── AgentEvent (ADR 0005 decision 1) ───────────────────────────
+
+    AgentEvent:
+      description: >-
+        ADR 0005 envelope + `kind` + `data`. The envelope is written once in
+        `x-envelope` and merged into every variant with a YAML merge key; every
+        variant requires the same fields (`x-envelope-required`). sessionId and
+        runId are null outside a session / run.
+      x-envelope-required:
+        &eventRequired [kind, projectId, agentId, sessionId, runId, seq, receivedAt, data]
+      x-envelope: &envelope
+        projectId:
+          type: string
+        agentId:
+          type: string
+        sessionId:
+          type: [string, 'null']
+        runId:
+          type: [string, 'null']
+        seq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Per-agent receive order. Starts at 1 and only increases.
+        receivedAt:
+          type: integer
+          format: int64
+          description: When the runtime received the source message, in epoch milliseconds.
+      oneOf:
+        # status
+        - $ref: '#/components/schemas/AgentStatusChangedEvent'
+        # lifecycle
+        - $ref: '#/components/schemas/AgentStartingEvent'
+        - $ref: '#/components/schemas/SessionStartedEvent'
+        - $ref: '#/components/schemas/SessionEndedEvent'
+        - $ref: '#/components/schemas/AgentErrorEvent'
+        - $ref: '#/components/schemas/AuthStatusEvent'
+        # run
+        - $ref: '#/components/schemas/RunStartedEvent'
+        - $ref: '#/components/schemas/RunEndedEvent'
+        # content (ACP session/update)
+        - $ref: '#/components/schemas/UserMessageChunkEvent'
+        - $ref: '#/components/schemas/AgentMessageChunkEvent'
+        - $ref: '#/components/schemas/AgentThoughtChunkEvent'
+        - $ref: '#/components/schemas/ToolCallEvent'
+        - $ref: '#/components/schemas/ToolCallUpdateEvent'
+        - $ref: '#/components/schemas/PlanEvent'
+        - $ref: '#/components/schemas/AvailableCommandsEvent'
+        - $ref: '#/components/schemas/CurrentModeEvent'
+        - $ref: '#/components/schemas/ConfigOptionsEvent'
+        - $ref: '#/components/schemas/SessionInfoEvent'
+        - $ref: '#/components/schemas/UsageEvent'
+        # permission
+        - $ref: '#/components/schemas/PermissionRequestedEvent'
+        - $ref: '#/components/schemas/PermissionResolvedEvent'
+        # diagnostics
+        - $ref: '#/components/schemas/UnknownUpdateEvent'
+      discriminator: kind
+
+    AgentStatusChangedEvent:
+      description: Status computed by the runtime, the single source (ADR 0005 decision 4).
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: agentStatusChanged
+        data:
+          $ref: '#/components/schemas/AgentStatusChangedData'
+
+    AgentStartingEvent:
+      description: A start stage began.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: agentStarting
+        data:
+          $ref: '#/components/schemas/AgentStartingData'
+
+    SessionStartedEvent:
+      description: session/new succeeded.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: sessionStarted
+        data:
+          $ref: '#/components/schemas/SessionStartedData'
+
+    SessionEndedEvent:
+      description: The session ended. Sent only after sessionStarted.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: sessionEnded
+        data:
+          $ref: '#/components/schemas/SessionEndedData'
+
+    AgentErrorEvent:
+      description: A stage failed (ADR 0005 error-code table).
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: agentError
+        data:
+          $ref: '#/components/schemas/AgentErrorData'
+
+    AuthStatusEvent:
+      description: The adapter reported its auth status (codex-acp `_auth/status_update`).
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: authStatus
+        data:
+          $ref: '#/components/schemas/AuthStatus'
+
+    RunStartedEvent:
+      description: session/prompt was sent.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: runStarted
+        data:
+          $ref: '#/components/schemas/RunStartedData'
+
+    RunEndedEvent:
+      description: The run ended (session/prompt answered, or the process stopped or exited).
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: runEnded
+        data:
+          $ref: '#/components/schemas/RunEndedData'
+
+    UserMessageChunkEvent:
+      description: ACP user_message_chunk.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: userMessageChunk
+        data:
+          $ref: '#/components/schemas/MessageChunkData'
+
+    AgentMessageChunkEvent:
+      description: ACP agent_message_chunk.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: agentMessageChunk
+        data:
+          $ref: '#/components/schemas/MessageChunkData'
+
+    AgentThoughtChunkEvent:
+      description: ACP agent_thought_chunk. Shown live only, never persisted.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: agentThoughtChunk
+        data:
+          $ref: '#/components/schemas/MessageChunkData'
+
+    ToolCallEvent:
+      description: ACP tool_call. `data` is the merged state after it.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: toolCall
+        data:
+          $ref: '#/components/schemas/ToolCallData'
+
+    ToolCallUpdateEvent:
+      description: ACP tool_call_update. `data` is the merged state after it.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: toolCallUpdate
+        data:
+          $ref: '#/components/schemas/ToolCallData'
+
+    PlanEvent:
+      description: ACP plan. Replaces the whole plan.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: plan
+        data:
+          $ref: '#/components/schemas/PlanData'
+
+    AvailableCommandsEvent:
+      description: ACP available_commands_update.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: availableCommands
+        data:
+          $ref: '#/components/schemas/AvailableCommandsData'
+
+    CurrentModeEvent:
+      description: ACP current_mode_update.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: currentMode
+        data:
+          $ref: '#/components/schemas/CurrentModeData'
+
+    ConfigOptionsEvent:
+      description: ACP config_option_update.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: configOptions
+        data:
+          $ref: '#/components/schemas/ConfigOptionsData'
+
+    SessionInfoEvent:
+      description: ACP session_info_update.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: sessionInfo
+        data:
+          $ref: '#/components/schemas/SessionInfoData'
+
+    UsageEvent:
+      description: ACP usage_update.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: usage
+        data:
+          $ref: '#/components/schemas/UsageData'
+
+    PermissionRequestedEvent:
+      description: The adapter sent session/request_permission.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: permissionRequested
+        data:
+          $ref: '#/components/schemas/PermissionRequestedData'
+
+    PermissionResolvedEvent:
+      description: A permission request was answered or cancelled.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: permissionResolved
+        data:
+          $ref: '#/components/schemas/PermissionResolvedData'
+
+    UnknownUpdateEvent:
+      description: A session/update the runtime does not know. Content is dropped.
+      type: object
+      additionalProperties: false
+      required: *eventRequired
+      properties:
+        <<: *envelope
+        kind:
+          const: unknownUpdate
+        data:
+          $ref: '#/components/schemas/UnknownUpdateData'
+
+    # ── AgentEvent data ────────────────────────────────────────────
+
+    AgentStatusChangedData:
+      type: object
+      additionalProperties: false
+      required: [status, previous]
+      properties:
+        status:
+          $ref: '#/components/schemas/AgentStatus'
+        previous:
+          $ref: '#/components/schemas/AgentStatus'
+
+    AgentStartingData:
+      type: object
+      additionalProperties: false
+      required: [stage]
+      properties:
+        stage:
+          $ref: '#/components/schemas/Stage'
+
+    SessionStartedData:
+      description: >-
+        `modes` and `configOptions` are the session/new result fields, masked by
+        the runtime and opaque to this protocol.
+      type: object
+      additionalProperties: false
+      required: [sessionId]
+      properties:
+        sessionId:
+          type: string
+        agentInfo:
+          $ref: '#/components/schemas/AgentInfo'
+        modes:
+          type: object
+        configOptions:
+          type: array
+          items:
+            type: object
+
+    SessionEndedData:
+      description: >-
+        `stopped`: agents-room ended the process because stopAgent asked,
+        whatever its exit code. `aborted`: agents-room ended it because of an
+        error (PROTOCOL_ERROR). `exited`: an exit nobody requested.
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          $ref: '#/components/schemas/SessionEndReason'
+        exitCode:
+          type: integer
+        signal:
+          type: string
+
+    AgentErrorData:
+      description: >-
+        The renderer shows copy keyed by `code`. `message` is masked diagnostic
+        detail (the cause line under that copy), never UI copy by itself.
+      type: object
+      additionalProperties: false
+      required: [code, stage, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        stage:
+          $ref: '#/components/schemas/Stage'
+        message:
+          type: string
+
+    AuthStatus:
+      description: >-
+        Auth status as the adapter reported it, without identity fields (codex-acp
+        `account.email` and the like are dropped, ADR 0004). `kind` is the
+        adapter's value (codex-acp: none, account, api_key, external, gateway);
+        `label` is shown verbatim and is the only place a plan name appears.
+      type: object
+      additionalProperties: false
+      required: [kind, label]
+      properties:
+        kind:
+          type: string
+        label:
+          type: string
+
+    RunStartedData:
+      type: object
+      additionalProperties: false
+      required: [runId, prompt]
+      properties:
+        runId:
+          type: string
+        prompt:
+          type: string
+
+    RunEndedData:
+      description: >-
+        `stopReason` is the ACP StopReason as received (open value).
+        `unfinishedToolCalls` lists tool calls the run left open, with a
+        client-derived status (ADR 0005 decision 6).
+      type: object
+      additionalProperties: false
+      required: [runId, outcome, unfinishedToolCalls]
+      properties:
+        runId:
+          type: string
+        outcome:
+          $ref: '#/components/schemas/RunOutcome'
+        stopReason:
+          type: string
+        errorCode:
+          $ref: '#/components/schemas/ErrorCode'
+        unfinishedToolCalls:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnfinishedToolCall'
+
+    UnfinishedToolCall:
+      type: object
+      additionalProperties: false
+      required: [toolCallId, derivedStatus]
+      properties:
+        toolCallId:
+          type: string
+        derivedStatus:
+          $ref: '#/components/schemas/DerivedToolStatus'
+
+    MessageChunkData:
+      description: >-
+        `contentType` is the ACP ContentBlock type (text, image, audio,
+        resource_link, resource). `text` is set only for text blocks.
+      type: object
+      additionalProperties: false
+      required: [contentType]
+      properties:
+        messageId:
+          type: string
+        contentType:
+          type: string
+        text:
+          type: string
+
+    ToolCallData:
+      type: object
+      additionalProperties: false
+      required: [toolCall]
+      properties:
+        toolCall:
+          $ref: '#/components/schemas/ToolCallState'
+
+    ToolCallState:
+      description: >-
+        Merged tool call (ADR 0005 decision 6). An absent `kind` or `status` means
+        the adapter did not report it (shown as "미지정"); the runtime never fills
+        in ACP defaults. `content` is the masked ACP ToolCallContent list.
+        `rawInput` and `rawOutput` are the latest reported ACP values (any JSON),
+        masked. `vendorMeta` is the masked `_meta` of the latest tool_call or
+        tool_call_update, as received and not merged (e.g. codex-acp
+        `terminal_output`, claude-agent-acp `claudeCode.parentToolUseId`); the
+        renderer shows it only as "어댑터 제공 정보".
+      type: object
+      additionalProperties: false
+      required: [toolCallId, locations]
+      properties:
+        toolCallId:
+          type: string
+        title:
+          type: string
+        kind:
+          $ref: '#/components/schemas/ToolKind'
+        status:
+          $ref: '#/components/schemas/ToolCallStatus'
+        locations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCallLocation'
+        content:
+          type: array
+          items:
+            type: object
+        rawInput:
+          description: ACP rawInput, any JSON value.
+        rawOutput:
+          description: ACP rawOutput, any JSON value.
+        vendorMeta:
+          type: object
+
+    ToolCallLocation:
+      type: object
+      additionalProperties: false
+      required: [path]
+      properties:
+        path:
+          type: string
+        line:
+          type: integer
+
+    PlanData:
+      type: object
+      additionalProperties: false
+      required: [entries]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanEntry'
+
+    PlanEntry:
+      description: >-
+        Masked, like every adapter-reported value. `priority` and `status` are
+        ACP open values, kept as strings.
+      type: object
+      additionalProperties: false
+      required: [content, priority, status]
+      properties:
+        content:
+          type: string
+        priority:
+          type: string
+        status:
+          type: string
+
+    AvailableCommandsData:
+      type: object
+      additionalProperties: false
+      required: [commands]
+      properties:
+        commands:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableCommand'
+
+    AvailableCommand:
+      description: An ACP AvailableCommand, masked.
+      type: object
+      additionalProperties: false
+      required: [name, description]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    CurrentModeData:
+      type: object
+      additionalProperties: false
+      required: [currentModeId]
+      properties:
+        currentModeId:
+          type: string
+
+    ConfigOptionsData:
+      description: Masked ACP SessionConfigOption list, opaque to this protocol.
+      type: object
+      additionalProperties: false
+      required: [configOptions]
+      properties:
+        configOptions:
+          type: array
+          items:
+            type: object
+
+    SessionInfoData:
+      description: ACP session_info_update, masked (the title is model-written text).
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        updatedAt:
+          type: string
+
+    UsageData:
+      description: '`cost` is present only when the adapter reported it.'
+      type: object
+      additionalProperties: false
+      required: [used, size]
+      properties:
+        used:
+          type: integer
+          format: int64
+        size:
+          type: integer
+          format: int64
+        cost:
+          $ref: '#/components/schemas/Cost'
+
+    Cost:
+      type: object
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount:
+          type: number
+        currency:
+          type: string
+
+    PermissionRequestedData:
+      type: object
+      additionalProperties: false
+      required: [permissionId, toolCall, options]
+      properties:
+        permissionId:
+          type: string
+        toolCall:
+          $ref: '#/components/schemas/ToolCallState'
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionOption'
+
+    PermissionOption:
+      description: An ACP PermissionOption; `name` is masked.
+      type: object
+      additionalProperties: false
+      required: [optionId, name, kind]
+      properties:
+        optionId:
+          type: string
+        name:
+          type: string
+        kind:
+          $ref: '#/components/schemas/PermissionOptionKind'
+
+    PermissionResolvedData:
+      description: >-
+        `optionId` is present exactly when `outcome` is `selected` (ACP
+        RequestPermissionOutcome).
+      type: object
+      additionalProperties: false
+      required: [permissionId, outcome]
+      properties:
+        permissionId:
+          type: string
+        outcome:
+          $ref: '#/components/schemas/PermissionOutcome'
+        optionId:
+          type: string
+      # The TS and Java types keep optionId optional; ajv (contract:check) checks this.
+      if:
+        properties:
+          outcome:
+            const: selected
+      then:
+        required: [optionId]
+      else:
+        not:
+          required: [optionId]
+
+    UnknownUpdateData:
+      description: Only the sessionUpdate type name is kept (SCRUM-50).
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+
+    # ── Project and agent shapes ───────────────────────────────────
+
+    RecentProject:
+      type: object
+      additionalProperties: false
+      required: [projectId, name, path]
+      properties:
+        projectId:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+
+    ProjectInfo:
+      description: >-
+        `path` is the validated real path. `files` is the minimal read-only tree,
+        flattened and depth-limited; `filesTruncated` is true when entries were
+        left out.
+      type: object
+      additionalProperties: false
+      required: [projectId, name, path, files, filesTruncated]
+      properties:
+        projectId:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileEntry'
+        filesTruncated:
+          type: boolean
+
+    FileEntry:
+      description: '`relativePath` is relative to the project path and uses `/` separators.'
+      type: object
+      additionalProperties: false
+      required: [relativePath, directory]
+      properties:
+        relativePath:
+          type: string
+        directory:
+          type: boolean
+
+    AgentSummary:
+      description: >-
+        An AgentConfig as the renderer sees it (no secrets) plus runtime-derived
+        fields. `palette` (one of the six palettes, 0-5) and `hueShift` (degrees:
+        0, or 45-315 once all six palettes are in use) are runtime-assigned
+        (ux.md). `reportsToolDetails` and `reportsSubagentSessions` come from
+        the static harness catalog (ux.md R3, R4).
+      type: object
+      additionalProperties: false
+      required:
+        - agentId
+        - projectId
+        - name
+        - harnessId
+        - providerId
+        - modelId
+        - authMethodId
+        - readiness
+        - palette
+        - hueShift
+        - reportsToolDetails
+        - reportsSubagentSessions
+      properties:
+        agentId:
+          type: string
+        projectId:
+          type: string
+        name:
+          type: string
+        harnessId:
+          type: string
+        providerId:
+          type: string
+        modelId:
+          type: [string, 'null']
+        authMethodId:
+          type: string
+        readiness:
+          $ref: '#/components/schemas/Readiness'
+        palette:
+          type: integer
+          minimum: 0
+          maximum: 5
+        hueShift:
+          type: integer
+          minimum: 0
+          maximum: 315
+          not:
+            minimum: 1
+            maximum: 44
+        reportsToolDetails:
+          type: boolean
+        reportsSubagentSessions:
+          type: boolean
+
+    AgentSnapshot:
+      description: >-
+        One agent at snapshot time (ADR 0005 decision 2). `lastSeq` is the seq of
+        the last event folded in (0 before the first). `toolCalls` are the
+        current run's merged tool calls (empty outside a run). Present only when
+        they apply: `prompt` (the current run's, or the last ended run's while
+        `lastRun` is present), `lastRun` (runEnded data of the last ended run,
+        until the next runStarted), `session` (while a session is open),
+        `sessionEnd` (sessionEnded data of the last session, until the next
+        sessionStarted), `lastError` (in `error`), `authStatus` (once the adapter
+        reported one). `recentEvents` is the in-memory event tail for "최근
+        이벤트", oldest first: at most 200 events, no agentThoughtChunk, and
+        consecutive text chunks of one kind and `messageId` (or of one run when
+        it is absent) merged into one event carrying the joined text and the last
+        chunk's seq and receivedAt.
+      type: object
+      additionalProperties: false
+      required:
+        [agent, status, sessionId, runId, lastSeq, toolCalls, pendingPermissions, recentEvents]
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentSummary'
+        status:
+          $ref: '#/components/schemas/AgentStatus'
+        sessionId:
+          type: [string, 'null']
+        runId:
+          type: [string, 'null']
+        lastSeq:
+          type: integer
+          format: int64
+          minimum: 0
+        toolCalls:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolCallState'
+        pendingPermissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionRequestedData'
+        prompt:
+          type: string
+        lastRun:
+          $ref: '#/components/schemas/RunEndedData'
+        session:
+          $ref: '#/components/schemas/SessionSnapshot'
+        sessionEnd:
+          $ref: '#/components/schemas/SessionEndedData'
+        lastError:
+          $ref: '#/components/schemas/AgentErrorData'
+        authStatus:
+          $ref: '#/components/schemas/AuthStatus'
+        recentEvents:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/AgentEvent'
+          # Thought chunks are live only. `not` sits on the array, not on items:
+          # Modelina would read a typed `not` on the items as "not an object".
+          not:
+            contains:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  const: agentThoughtChunk
+
+    SessionSnapshot:
+      description: >-
+        The latest value of each session-scoped report of the open session. A
+        field is present once reported: `agentInfo` and `modes` from
+        sessionStarted, `configOptions` from sessionStarted or the last
+        configOptions event, `currentModeId` from the last currentMode event, and
+        `sessionInfo`, `availableCommands`, `plan` (entries) and `usage` from the
+        last event of that kind. Masked like the events they come from.
+      type: object
+      additionalProperties: false
+      properties:
+        agentInfo:
+          $ref: '#/components/schemas/AgentInfo'
+        modes:
+          type: object
+        configOptions:
+          type: array
+          items:
+            type: object
+        currentModeId:
+          type: string
+        sessionInfo:
+          $ref: '#/components/schemas/SessionInfoData'
+        availableCommands:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableCommand'
+        plan:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanEntry'
+        usage:
+          $ref: '#/components/schemas/UsageData'
+
+    AgentInfo:
+      description: ACP initialize agentInfo (Implementation), masked.
+      type: object
+      additionalProperties: false
+      required: [name, version]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        title:
+          type: string
+
+    AuthMethodInfo:
+      description: An ACP AuthMethod as the adapter advertised it, masked.
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+
+    # ── Client commands ────────────────────────────────────────────
+    # Sprint 0 wires openProject, checkConnection, startAgent, stopAgent,
+    # sendPrompt and respondPermission. relocateProject, saveAgentConfig and
+    # cancelRun are defined now and answered with commandRejected
+    # {reason: NOT_IMPLEMENTED} until they are wired (Sprint 1).
+
+    OpenProject:
+      description: Open a local folder as the current project. The runtime validates `path`.
+      type: object
+      additionalProperties: false
+      required: [type, path]
+      properties:
+        type:
+          const: openProject
+        path:
+          type: string
+
+    RelocateProject:
+      description: Point a registered project at its new folder (SCRUM-32). Not wired in Sprint 0.
+      type: object
+      additionalProperties: false
+      required: [type, projectId, path]
+      properties:
+        type:
+          const: relocateProject
+        projectId:
+          type: string
+        path:
+          type: string
+
+    SaveAgentConfig:
+      description: Create or update an AgentConfig (SCRUM-25, 26). Not wired in Sprint 0.
+      type: object
+      additionalProperties: false
+      required: [type, config]
+      properties:
+        type:
+          const: saveAgentConfig
+        config:
+          $ref: '#/components/schemas/AgentConfigInput'
+
+    AgentConfigInput:
+      description: An absent `agentId` creates a new agent (the runtime issues the UUID).
+      type: object
+      additionalProperties: false
+      required: [projectId, name, harnessId, providerId, modelId, authMethodId]
+      properties:
+        agentId:
+          type: string
+        projectId:
+          type: string
+        name:
+          type: string
+        harnessId:
+          type: string
+        providerId:
+          type: string
+        modelId:
+          type: [string, 'null']
+        authMethodId:
+          type: string
+
+    CheckConnection:
+      description: Spawn the adapter and run initialize only; answered by connectionChecked.
+      type: object
+      additionalProperties: false
+      required: [type, agentId]
+      properties:
+        type:
+          const: checkConnection
+        agentId:
+          type: string
+
+    StartAgent:
+      type: object
+      additionalProperties: false
+      required: [type, agentId]
+      properties:
+        type:
+          const: startAgent
+        agentId:
+          type: string
+
+    StopAgent:
+      type: object
+      additionalProperties: false
+      required: [type, agentId]
+      properties:
+        type:
+          const: stopAgent
+        agentId:
+          type: string
+
+    SendPrompt:
+      type: object
+      additionalProperties: false
+      required: [type, agentId, text]
+      properties:
+        type:
+          const: sendPrompt
+        agentId:
+          type: string
+        text:
+          type: string
+
+    CancelRun:
+      description: Cancel the run only (SCRUM-24). Not wired in Sprint 0.
+      type: object
+      additionalProperties: false
+      required: [type, agentId, runId]
+      properties:
+        type:
+          const: cancelRun
+        agentId:
+          type: string
+        runId:
+          type: string
+
+    RespondPermission:
+      description: The option the user picked for a pending permission request.
+      type: object
+      additionalProperties: false
+      required: [type, permissionId, optionId]
+      properties:
+        type:
+          const: respondPermission
+        permissionId:
+          type: string
+        optionId:
+          type: string
+
+    # ── Enums ──────────────────────────────────────────────────────
+
+    AgentStatus:
+      description: ux.md status vocabulary. `disconnected` is post-MVP (SCRUM-48) and not defined yet.
+      type: string
+      enum: [offline, starting, ready, running, awaiting_permission, cancelling, error]
+
+    RunOutcome:
+      description: ADR 0005 decision 5.
+      type: string
+      enum: [completed, cancelled, refused, limit_reached, failed]
+
+    Stage:
+      description: Stage column of the ADR 0005 error-code table.
+      type: string
+      enum: [spawn, initialize, authenticate, session_new, prompt, running, config, check]
+
+    SessionEndReason:
+      description: See SessionEndedData.
+      type: string
+      enum: [stopped, aborted, exited]
+
+    DerivedToolStatus:
+      description: Client-derived, never reported by the adapter (ADR 0005 decision 6).
+      type: string
+      enum: [cancelled, incomplete]
+
+    ToolKind:
+      description: ACP ToolKind. The runtime maps an unknown wire value to `other`.
+      type: string
+      enum: [read, edit, delete, move, search, execute, think, fetch, switch_mode, other]
+
+    ToolCallStatus:
+      description: ACP ToolCallStatus. The runtime drops an unknown wire value (the field is omitted).
+      type: string
+      enum: [pending, in_progress, completed, failed]
+
+    PermissionOptionKind:
+      type: string
+      enum: [allow_once, allow_always, reject_once, reject_always]
+
+    PermissionOutcome:
+      type: string
+      enum: [selected, cancelled]
+
+    Readiness:
+      description: AgentConfig readiness (architecture.md Agent config registry).
+      type: string
+      enum: [configured, auth_required, unsupported, executable_missing]
+
+    ErrorCode:
+      description: ADR 0005 error-code table, MVP and post-MVP values.
+      type: string
+      enum:
+        - EXECUTABLE_MISSING
+        - ADAPTER_START_FAILED
+        - PROTOCOL_UNSUPPORTED
+        - ACP_INIT_FAILED
+        - AUTH_REQUIRED
+        - AUTH_FAILED
+        - SESSION_CREATE_FAILED
+        - PROMPT_FAILED
+        - PROCESS_EXITED
+        - PROTOCOL_ERROR
+        - MODEL_INCOMPATIBLE
+        - AWS_CREDENTIALS_UNAVAILABLE
+        - AWS_CREDENTIALS_INVALID
+        - BEDROCK_ACCESS_DENIED
+        - BEDROCK_MODEL_UNAVAILABLE
+        - NETWORK
+        - THROTTLED
+        - TIMEOUT
+        - CHECK_UNAVAILABLE
+
+    ProjectErrorCode:
+      description: openProject validation failure, in check order (ADR 0005 decision 8).
+      type: string
+      enum: [PATH_NOT_ABSOLUTE, PATH_NOT_FOUND, PATH_NOT_DIRECTORY, PATH_NOT_READABLE]
+
+    RejectReason:
+      description: commandRejected reasons (ADR 0005 decision 8).
+      type: string
+      enum:
+        - UNKNOWN_PROJECT
+        - UNKNOWN_AGENT
+        - UNKNOWN_PERMISSION
+        - INVALID_STATE
+        - INVALID_MESSAGE
+        - NOT_IMPLEMENTED
