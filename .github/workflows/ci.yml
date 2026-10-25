@@ -87,6 +87,12 @@ jobs:
           fi
         continue-on-error: true
 
+      - name: Contract fixtures check
+        id: contract_check
+        if: always() && steps.install_dependencies.outcome == 'success'
+        run: npm run contract:check
+        continue-on-error: true
+
       # --- E2E inventory drift (blocking) ---
       # Lists the legacy VS Code / standalone e2e specs, which still exist.
       # .husky/pre-push runs the same check.
@@ -170,6 +176,7 @@ jobs:
           INSTALL_DEPENDENCIES: ${{ steps.install_dependencies.outcome }}
           VALIDATE_SPEC: ${{ steps.validate_spec.outcome }}
           MESSAGES_DRIFT: ${{ steps.messages_drift.outcome }}
+          CONTRACT_CHECK: ${{ steps.contract_check.outcome }}
           E2E_INVENTORY_DRIFT: ${{ steps.e2e_inventory_drift.outcome }}
           TYPE_CHECK: ${{ steps.type_check.outcome }}
           LINT: ${{ steps.lint.outcome }}
@@ -196,6 +203,7 @@ jobs:
             echo "| Install dependencies | $(status "$INSTALL_DEPENDENCIES") |"
             echo "| **AsyncAPI spec** | $(status "$VALIDATE_SPEC") |"
             echo "| **Generated messages drift** | $(status "$MESSAGES_DRIFT") |"
+            echo "| **Contract fixtures** | $(status "$CONTRACT_CHECK") |"
             echo "| **E2E inventory drift** | $(status "$E2E_INVENTORY_DRIFT") |"
             echo "| **Type check** | $(status "$TYPE_CHECK") |"
             echo "| **Lint** | $(status "$LINT") |"
@@ -217,6 +225,7 @@ jobs:
           INSTALL_DEPENDENCIES: ${{ steps.install_dependencies.outcome }}
           VALIDATE_SPEC: ${{ steps.validate_spec.outcome }}
           MESSAGES_DRIFT: ${{ steps.messages_drift.outcome }}
+          CONTRACT_CHECK: ${{ steps.contract_check.outcome }}
           E2E_INVENTORY_DRIFT: ${{ steps.e2e_inventory_drift.outcome }}
           TYPE_CHECK: ${{ steps.type_check.outcome }}
           LINT: ${{ steps.lint.outcome }}
@@ -227,7 +236,7 @@ jobs:
         run: |
           failed=0
           for step in CHECKOUT SETUP_NODE INSTALL_DEPENDENCIES \
-                      VALIDATE_SPEC MESSAGES_DRIFT E2E_INVENTORY_DRIFT \
+                      VALIDATE_SPEC MESSAGES_DRIFT CONTRACT_CHECK E2E_INVENTORY_DRIFT \
                       TYPE_CHECK LINT \
                       WEBVIEW_TEST FORMAT_CHECK BUILD SERVER_TEST; do
             val=$(printenv "$step" 2>/dev/null || echo "skipped")
