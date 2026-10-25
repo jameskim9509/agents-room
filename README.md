@@ -10,7 +10,7 @@ agents-room은 코딩 에이전트를 픽셀 캐릭터로 보여주는 게임형
 - 다음은 SCRUM Sprint 1(계획)이다.
 - 배포 서비스의 모델은 Amazon Bedrock으로 제공한다. MVP에서는 Codex를 ChatGPT 로그인으로, Claude Code를 Bedrock mock 서버(SCRUM-67)로 확인한다. Claude 계정 로그인은 쓰지 않는다 → [ADR 0004](docs/adr/0004-model-authentication.md).
 - 코드는 아직 pixel-agents 기준선(`d1e007a`) 그대로다: VS Code 확장과 `npx pixel-agents` standalone CLI이며, Claude Code hooks와 JSONL로 동작한다. 데스크톱 셸, Java 런타임, ACP 연동은 아직 없다.
-- `package.json`의 이름과 배포 워크플로는 아직 업스트림 그대로다. 이 포크에서는 배포(publish)하지 않는다 → [남은 업스트림 흔적](docs/upstream.md#남은-업스트림-흔적).
+- `package.json`의 이름은 아직 업스트림 그대로다. 상속한 배포 워크플로는 지웠고, 이 포크에서는 npm·Marketplace로 배포(publish)하지 않는다 → [남은 업스트림 흔적](docs/upstream.md#남은-업스트림-흔적).
 - 처음이면 [구성도](docs/architecture.md#구성도) → [ADR 0003](docs/adr/0003-acp-integration.md) → [상태 어휘](docs/ux.md#상태-어휘) 순서로 읽는다. ADR 0001–0005는 모두 합의되었다. 남은 결정은 각 ADR의 "열린 질문"에 있다.
 
 ## 문서 지도
