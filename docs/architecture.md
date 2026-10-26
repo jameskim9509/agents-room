@@ -1,6 +1,6 @@
 # 아키텍처
 
-이 문서는 agents-room의 목표 구조를 설명한다. 구현을 시작한 것은 [데스크톱 셸](#데스크톱-셸)(`desktop/`)과 렌더러의 데스크톱 분기, 로컬 런타임의 골격([`runtime/`](#로컬-런타임-코드-구성))뿐이다. 나머지 코드는 아직 pixel-agents 기준선([`d1e007a`](upstream.md#포크-기준)) 그대로이고, 나머지 구성요소는 계획이다.
+이 문서는 agents-room의 목표 구조를 설명한다. 구현을 시작한 것은 [데스크톱 셸](#데스크톱-셸)(`desktop/`)과 렌더러의 데스크톱 분기, 로컬 런타임([`runtime/`](#로컬-런타임-코드-구성): 프로젝트 열기와 Codex ACP 연결)뿐이다. 나머지 코드는 아직 pixel-agents 기준선([`d1e007a`](upstream.md#포크-기준)) 그대로이고, 나머지 구성요소는 계획이다.
 화면과 문구는 [ux.md](ux.md), 결정과 대안은 [ADR](adr/README.md), 업스트림 코드 상세는 [upstream.md](upstream.md)에 있다.
 
 ## 용어집
@@ -86,6 +86,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
   - 담는 값: 마지막 스냅샷, 현재 프로젝트, 에이전트 목록, 에이전트별 최근 이벤트 200개와 마지막 `seq`, 에이전트별 `connectionChecked`, 마지막 `projectOpenFailed`와 `commandRejected`. 프레임은 받은 그대로 담는다. 프레임에서 빠진 선택 필드는 빠진 채로(`undefined`) 둔다. 생성된 타입의 `?:` 필드와 같다. 스냅샷에 프로젝트가 없을 때만 `project`를 `null`로 담는다. 화면은 둘 다 "미지정"으로 보여준다 (D3).
   - 스냅샷은 앞서 담은 값을 모두 바꾼다. 스냅샷의 `lastSeq` 이하인 이벤트는 버린다. `agentsUpdated`에서 빠진 에이전트의 값은 지운다.
   - 프레임을 기록만 하고, 상태나 현재 Tool을 계산하지 않는다. 프로젝트 패널과 Detail Panel(SCRUM-18, 19)이 이 값으로 화면을 그린다. 두 화면은 아직 없다.
+- 렌더러가 런타임에 명령을 보내는 길은 `transport/index.ts`의 `sendRuntimeCommand(command)` 하나다. 런타임 소켓으로 보내고, 소켓이 열려 있지 않으면 열릴 때까지 쌓아 둔다. 답은 프레임으로 와서 위 상태 저장소에 담긴다. 패널이 생기기 전에는 e2e test hook(`__pixelAgentsTestHooks.sendRuntimeCommand`)만 이것을 부른다.
 - `WebSocketTransport`는 구독자가 생기기 전에 온 메시지를 순서대로 잡아 두었다가 첫 구독자에게 넘긴다(`transport/heldMessages.ts`). 연결 직후 오는 메시지를 잃지 않기 위해서다.
 - 렌더러는 스프라이트, 가구, 기본 레이아웃을 자기 번들에서 읽는다(`webview-ui/src/localAssets.ts`). Vite 빌드가 디코딩한 JSON(`assets/decoded/*.json`)을 함께 내보낸다. 런타임은 에셋을 보내지 않는다. 이 에셋 프레임의 타입(`LocalAssetMessage`)은 계약 밖의 렌더러 전용 타입이고, 프레임은 소켓을 지나지 않는다.
 - 데스크톱에서는 레이아웃 편집("Layout")과 "+ Agent" 버튼을 숨긴다. 레이아웃 편집은 post-MVP다 (SCRUM-59). Settings에서도 VS Code나 업스트림 서버만 처리하는 항목을 숨긴다: Open Sessions Folder, Export/Import Layout, Add Asset Directory, Watch All Sessions, Instant Detection (Hooks), Display Headless as Ghosts. 런타임이 맡을 설정은 계약이 정해지면 다시 넣는다.
@@ -95,12 +96,12 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 셸은 런타임을 띄우고 지켜본다. 형식은 ADR 0001 결정 4와 5에, 두 쪽이 함께 따르는 계약은 [셸과 런타임의 연결](#셸과-런타임의-연결)에 있다.
 
 1. 실행 명령을 정한다: `AGENTS_ROOM_RUNTIME_COMMAND`(JSON argv, 테스트와 디버깅용) → `runtime/build/dev-runtime.json`(`{"java", "jar"}`, 런타임 Gradle 빌드가 쓴다) 순서다. 둘 다 없으면 실패 대화상자를 띄운다. 설치판의 경로는 패키징 때 정한다. 셸의 테스트·개발용 환경변수(`AGENTS_ROOM_RUNTIME_COMMAND`, `AGENTS_ROOM_READY_TIMEOUT_MS`, `AGENTS_ROOM_USER_DATA_DIR`, `AGENTS_ROOM_RENDERER_URL`)는 패키징하지 않은 실행에서만 읽는다(`devOverrides.ts`). 설치판은 모두 무시한다.
-2. 환경변수 `AGENTS_ROOM_TOKEN`, `AGENTS_ROOM_DATA_DIR`(Electron `userData`), `AGENTS_ROOM_ALLOWED_ORIGINS`를 넘기고 UTF-8 JVM 옵션으로 띄운다. 셸 전용 환경변수는 넘기지 않는다. 모든 OS에서 detached로 띄운다. Windows에서는 셸의 job object 밖에 두기 위해서다. 그 안에 있으면 셸이 죽을 때 OS가 런타임도 바로 끝내서, 런타임이 어댑터를 정리하지 못한다.
+2. 환경변수 `AGENTS_ROOM_TOKEN`, `AGENTS_ROOM_DATA_DIR`(Electron `userData`), `AGENTS_ROOM_ALLOWED_ORIGINS`, `AGENTS_ROOM_NODE`(셸 자신의 실행 파일 `process.execPath`)와 `AGENTS_ROOM_NODE_ELECTRON=1`을 넘기고 UTF-8 JVM 옵션으로 띄운다. 런타임은 이 Electron을 Node로 써서 어댑터를 띄운다 ([어댑터 실행](#어댑터-실행)). 셸 전용 환경변수는 넘기지 않는다. 설치판은 런타임의 어댑터 override(`AGENTS_ROOM_HARNESS_<ID>_COMMAND`, `AGENTS_ROOM_ADAPTERS_DIR`)도 넘기지 않는다([어댑터 실행](#어댑터-실행)). 모든 OS에서 detached로 띄운다. Windows에서는 셸의 job object 밖에 두기 위해서다. 그 안에 있으면 셸이 죽을 때 OS가 런타임도 바로 끝내서, 런타임이 어댑터를 정리하지 못한다.
 3. stdout의 `AGENTS_ROOM_READY {"port":<int>}`를 30초 기다린다. 그 밖의 stdout과 stderr는 `<userData>/logs/runtime.log`에 토큰을 가려서 쓴다. 셸도 실행마다 `the runtime started (pid N)` 줄을 남긴다. 앞 세션의 로그는 `runtime.previous.log`로 한 번 남긴다. 이름을 바꾸지 못하면(다른 프로그램이 파일을 열고 있을 때) `runtime.log`에 이어 쓰고, 그 파일도 열 수 없으면 `runtime-<pid>.log`에 쓴다. 실패 대화상자는 실제로 쓰는 파일의 경로를 보여준다.
 4. 시작 실패나 예상하지 않은 종료에는 "로컬 런타임을 시작하지 못했습니다" 대화상자를 띄운다 (문구는 [ux.md](ux.md#문구-목록)). "다시 시작"은 새 토큰으로 런타임을 한 번 더 띄운다. 자동으로 다시 시작하지 않는다.
 5. 앱을 끄면 stdin을 닫고 3초 기다린 뒤, 살아 있으면 프로세스 트리를 강제로 끝낸다.
 
-e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런타임(`e2e/desktop/fixtures/fake-runtime.cjs`)으로 셸을 검증한다. `e2e/desktop/realRuntime.spec.ts`는 셸이 `runtime/build/dev-runtime.json`의 실제 런타임 jar를 띄우게 하고 두 쪽의 연결을 끝까지 확인한다: 준비 줄, `app://bundle`에서 토큰으로 접속, 토큰과 Origin 검사, 렌더러에 온 스냅샷, 앱을 끈 뒤 남은 java 프로세스가 없음. 이 spec은 런타임을 빌드하지 않은 로컬에서는 건너뛴다. CI(`desktop-windows` job)는 런타임을 먼저 빌드하고, 거기서 jar가 없으면 실패한다.
+e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런타임(`e2e/desktop/fixtures/fake-runtime.cjs`)으로 셸을 검증한다. `e2e/desktop/realRuntime.spec.ts`는 셸이 `runtime/build/dev-runtime.json`의 실제 런타임 jar를 띄우게 하고 두 쪽의 연결을 끝까지 확인한다: 준비 줄, `app://bundle`에서 토큰으로 접속, 토큰과 Origin 검사, 렌더러에 온 스냅샷, 앱을 끈 뒤 남은 java 프로세스가 없음. `e2e/desktop/agentRun.spec.ts`는 같은 실제 런타임이 기본 Codex 에이전트를 mock ACP agent로 띄우게 하고(`AGENTS_ROOM_HARNESS_CODEX_COMMAND`, `AGENTS_ROOM_E2E=1`), 폴더 선택기(stub)로 고른 프로젝트를 열고, 에이전트를 시작하고, 프롬프트를 보낸다. 렌더러의 상태 저장소에 온 이벤트의 순서(`seq`, `starting` → `ready` → `running` → `ready`, Tool 호출, 메시지 청크, `runEnded`), 중지, 비정상 종료 뒤의 `error`와 다시 시작, 앱을 끈 뒤 남은 java와 mock 프로세스가 없음을 본다. mock은 셸의 Electron을 Node로 써서 돈다. 데스크톱 e2e의 모든 실행은 `AGENTS_ROOM_E2E=1`과 격리된 `CODEX_HOME`을 쓴다. 이 spec들은 런타임을 빌드하지 않은 로컬에서는 건너뛴다. CI(`desktop-windows` job)는 런타임을 먼저 빌드하고, 거기서 jar가 없으면 실패한다.
 
 ## 런타임 구성요소
 
@@ -130,7 +131,7 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
 
 - 프로젝트별 AgentConfig를 관리한다: `{agentId, projectId, name, harnessId, providerId, modelId | null, authMethodId, providerSettings {awsProfile?, awsRegion?, endpointUrl?}}`. 비밀은 담지 않는다 ([ADR 0004](adr/0004-model-authentication.md), SCRUM-10, 65).
 - `providerId`는 `amazon-bedrock`과 `openai`다. MVP의 `amazon-bedrock`은 `endpointUrl`로 Bedrock mock 서버를 가리킨다 ([ADR 0004](adr/0004-model-authentication.md) 결정 10, SCRUM-67). 고를 수 있는 제공자, 모델, 인증 방식은 실행기 카탈로그([ADR 0003](adr/0003-acp-integration.md))와 정적 호환성 규칙으로 정한다: `claude-code`는 `amazon-bedrock`만 쓴다 (ADR 0004 결정 4). 모델은 `claude-code`가 Anthropic 계열, `codex`가 OpenAI GPT 계열만 쓴다 (제안). 설치되지 않은 실행기나 지원하지 않는 조합은 실행할 수 있다고 표시하지 않는다 (SCRUM-26, 58).
-- 설정 상태(`configured`, `auth_required`, `unsupported`, `executable_missing`)를 계산한다 (SCRUM-25, 36).
+- 설정 상태(`configured`, `auth_required`, `unsupported`, `executable_missing`)를 계산한다 (SCRUM-25, 36). 카탈로그가 실행하지 않는 조합은 `unsupported`, 어댑터 실행 명령을 정할 수 없거나 마지막으로 띄울 때 실행 파일이 없었으면 `executable_missing`([어댑터 실행](#어댑터-실행)), 마지막으로 본 어댑터가 설정한 인증 방식(`chat-gpt`)을 광고하지 않았으면 `unsupported`, 어댑터가 마지막으로 "로그인 안 됨"(kind `none`)을 알렸으면 `auth_required`, 그 밖은 `configured`다 (D9). 시작과 연결 확인이 본 것이 이 값에 들어가고, `connectionChecked`의 `readiness`도 이 값이다. 그래서 카드와 확인 결과가 다르지 않다. 값이 바뀌면 `agentsUpdated`를 다시 보낸다.
 - "에이전트 추가"(SCRUM-25, 26)가 생기기 전까지는 프로젝트를 처음 열 때 에이전트 하나를 만들어 저장한다: 이름 `Codex`, `harnessId` `codex`, `providerId` `openai`, `modelId` 없음(실행기 기본값), `authMethodId` `chat-gpt`, palette 0, hueShift 0. `agentId`(UUID)도 저장하므로 다시 시작해도 같다 (Sprint 0 제안).
 
 ### Process supervisor
@@ -138,24 +139,71 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
 - 어댑터를 자식 프로세스로 띄운다. `cwd`는 프로젝트 경로이고, env는 명시적으로 구성한다 (env 위생은 ADR 0004, SCRUM-9). MVP에서는 OS 수준 격리(sandbox)를 하지 않으므로 `cwd` 지정은 접근 제한이 아니다 (SCRUM-35, 표시 규칙은 [ux.md](ux.md#관찰한-것만-보여준다)).
 - 종료 코드와 시그널을 감지한다. 에이전트를 끌 때(`stopAgent`)는 진행 중인 실행을 먼저 [취소](#실행-취소)하고 정해진 시간만 기다린다. 그다음 자손 목록 스냅샷([`ProcessHandle.descendants()`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ProcessHandle.html)) → stdin 닫기 → 대기 → 어댑터 종료 → 스냅샷에 남은 자손 종료 순서로 끝낸다. 상태 전이는 [ADR 0005](adr/0005-agent-event-model.md) 결정 4에 있다.
 - 셸이 죽으면 런타임이 스스로 끝내고 자식 프로세스를 정리한다 (방식은 ADR 0001). OS별 보장 범위는 [셸과 런타임의 연결](#셸과-런타임의-연결)에 있다.
+- 실행 중인 에이전트를 끄면 그동안 상태는 `cancelling`이다. `session/cancel`을 보내고 대기 중인 권한 요청을 `cancelled`로 닫은 뒤 `session/prompt` 응답을 5초까지 기다린다. 그다음 stdin을 닫고, SDK가 2초 기다린 뒤 프로세스를 끝내고, 남은 트리를 강제로 끝낸다. 끝난 뒤에야 `offline`이 된다. Windows에서 codex-acp는 stdin EOF 뒤 끝나는 데 2초쯤 걸려서 SDK의 2초와 앞뒤를 다툰다. 먼저 끝나면 종료 코드 0이고(셸의 Electron으로 띄운 2026-10-26 확인), 늦으면 SDK가 끝내서 종료 코드 1이 로그에 남는다(`PATH`의 node로 띄운 2026-10-24 확인). 어느 쪽이든 요청한 종료이므로 `sessionEnded {reason: stopped}`다 (D13).
+- 요청하지 않은 종료를 감지하면 남은 트리부터 끝내고 `error`가 된다. `error`에서는 어댑터 프로세스가 없다.
+- 런타임이 끝날 때(stdin EOF, 셸 종료)는 에이전트마다 열려 있는 어댑터 프로세스를 모두 바로 끝낸다: 세션의 것, 연결 확인의 것, 시작 중이거나 끝내는 중인 것.
+
+### 어댑터 실행
+
+Process supervisor가 어댑터를 띄우는 규칙이다 ([ADR 0003](adr/0003-acp-integration.md) 결정 8, [ADR 0004](adr/0004-model-authentication.md) 결정 5).
+
+- 실행 명령은 다음 순서로 정한다 (`harness.HarnessLauncher`). 셸을 거치지 않는다: `npx`와 `cmd /c`를 쓰지 않는다.
+  1. `AGENTS_ROOM_HARNESS_<ID>_COMMAND`(Codex는 `AGENTS_ROOM_HARNESS_CODEX_COMMAND`): JSON 배열 argv를 그대로 쓴다. e2e와 디버깅용이다. 첫 원소가 절대 경로인데 그 파일이 없으면 실행할 수 없다고 본다.
+  2. `AGENTS_ROOM_E2E=1`인데 1이 없으면 실행하지 않는다 (fail closed). e2e가 실수로 실제 어댑터를 띄우지 않게 한다.
+  3. `<node> <adapters>/node_modules/@agentclientprotocol/codex-acp/dist/index.js`. `<adapters>`는 `AGENTS_ROOM_ADAPTERS_DIR`이 있으면 그 폴더, 없으면 런타임 jar(테스트에서는 작업 폴더) 위쪽에서 처음으로 `tools/adapters/package.json`이 있는 `tools/adapters`다. `<node>`는 `AGENTS_ROOM_NODE`(셸이 넘기는 실행 파일의 절대 경로)가 있으면 그것, 없으면 `PATH`의 `node`(Windows는 `node.exe`)를 절대 경로로 쓴다. 런타임 jar를 셸 없이 띄우면(개발, 테스트) `PATH`의 node가 쓰인다.
+- 설치판(셸의 `app.isPackaged`)은 1의 `AGENTS_ROOM_HARNESS_<ID>_COMMAND`와 `AGENTS_ROOM_ADAPTERS_DIR`를 런타임에 넘기지 않는다(이름의 대소문자와 상관없이). 셸의 테스트 변수와 같은 이유다: 사용자 환경변수를 바꿀 수 있는 프로그램이 아무 명령이나 에이전트로 띄우게 된다 (ADR 0001 결정 5). `AGENTS_ROOM_E2E`는 어댑터를 막기만 하므로 넘긴다.
+- 런타임의 Gradle 테스트는 `AGENTS_ROOM_E2E=1`, 빈 `AGENTS_ROOM_HARNESS_CODEX_COMMAND`·`AGENTS_ROOM_ADAPTERS_DIR`·`AGENTS_ROOM_NODE*`, 격리된 `CODEX_HOME`으로 돈다(`runtime/build.gradle.kts`, 빈 값은 없는 것으로 본다). 개발자 셸의 override나 설치된 codex-acp를 테스트가 띄우지 않는다. 어댑터가 필요한 테스트는 mock 명령을 Spring 속성으로 정하고, 이 속성이 환경변수보다 우선한다.
+- Node는 셸의 Electron이다 (ADR 0003 결정 12). 셸은 패키징 여부와 상관없이 `AGENTS_ROOM_NODE`에 자기 실행 파일(`process.execPath`)을, `AGENTS_ROOM_NODE_ELECTRON`에 `1`을 넘긴다. 실행 파일이 그 파일인 실행(설치된 어댑터든 1의 override든, 파일로 비교한다)은 어댑터 env에 `ELECTRON_RUN_AS_NODE=1`을 더한다. 그래서 Electron이 일반 Node(Electron 45는 Node 24.22.0)로 돈다. 개발 PC에서 codex-acp 2.2.2가 이렇게 `initialize`와 `session/new`까지 도는 것을 확인했다 (2026-10-26). 런타임 자신의 env에 있는 `ELECTRON_RUN_AS_NODE`는 넘기지 않는다: 이 값을 넣는 것은 실행뿐이다.
+  - 이 값은 어댑터의 자식에게도 간다. codex-acp는 Codex(`@openai/codex/bin/codex.js`)를 `process.execPath`, 곧 같은 Electron으로 띄우므로 이 값이 있어야 한다. 그 결과 Codex가 실행하는 명령에도 이 값이 있어서, Codex가 띄운 Electron 앱(예: 이 저장소의 `npm run desktop:start`)은 앱이 아니라 Node로 돈다 (ADR 0003 결과).
+- `tools/adapters/`는 npm 워크스페이스가 아니다. codex-acp와 Codex 실행 파일은 448 MB라서 루트의 `npm ci`는 이것을 설치하지 않는다. `npm run adapters:install`이 `tools/adapters/package-lock.json`대로 설치한다(`--ignore-scripts`). CI는 설치하지 않고 mock ACP agent만 쓴다. 설치판에 어댑터를 동봉하는 일은 ADR 0003 결정 12를 따른다 (Sprint 1).
+- 실행 명령을 정할 수 있는지가 설치 확인이다: 정하면 `configured`(인증 상태에 따라 `auth_required`), 못 정하면 `executable_missing`이다. 결과를 기억해 두고, 프로젝트를 열 때와 에이전트를 시작하거나 연결을 확인할 때 다시 확인한다. 스냅샷을 만들 때는 디스크를 읽지 않는다.
+- 작업 폴더는 프로젝트의 실제 경로다. SDK의 stdio transport에는 작업 폴더 옵션이 없어서 `getProcessBuilder()`를 재정의한다. `session/new`의 `cwd`도 같은 경로다.
+- env는 아래 허용 목록의 변수만 넘긴다(`inheritEnvironment(false)`, `harness.AdapterEnvironment`). 이름은 대소문자를 가리지 않는다. 그 밖의 변수, 곧 셸의 `AGENTS_ROOM_*`(WebSocket 토큰 포함), 자격증명 변수, 어댑터 스위치(`NO_BROWSER`, `APP_SERVER_LOGS`, `DEFAULT_AUTH_REQUEST`, `CODEX_PATH`, `CODEX_CONFIG`), `NODE_OPTIONS`는 넘기지 않는다. 자격증명 변수(ADR 0004 결정 5)가 있었으면 그 이름만 로그에 남기고, env 값은 어떤 것도 로그에 남기지 않는다.
+  - Windows 시스템과 프로그램 위치: `SystemRoot`, `windir`, `SystemDrive`, `ComSpec`, `PATHEXT`, `OS`, `PROCESSOR_ARCHITECTURE`, `PROCESSOR_IDENTIFIER`, `NUMBER_OF_PROCESSORS`, `COMPUTERNAME`, `USERDOMAIN`, `USERNAME`, `ProgramData`, `ProgramFiles`, `ProgramFiles(x86)`, `ProgramW6432`, `CommonProgramFiles`, `CommonProgramFiles(x86)`, `CommonProgramW6432`, `ALLUSERSPROFILE`, `PUBLIC`
+  - 사용자 폴더: `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `HOME`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `TMPDIR`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`
+  - POSIX 세션: `PATH`, `SHELL`, `USER`, `LOGNAME`, `TERM`, `LANG`, `LANGUAGE`, `TZ`, `LC_*`
+  - Codex: `CODEX_HOME`. 사용자가 정해 둔 경우에만 있다. 런타임은 설정하지 않는다 (ADR 0004 인증 방식 표)
+  - 네트워크: `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`
+- stdout은 ACP 전용이다. stderr는 줄마다 마스킹해서 `[agent <이름> <agentId 앞 8자>]` 접두어를 붙여 런타임 로그(로거 `agentsroom.runtime.acp.adapter-stderr`)에 남긴다 (ADR 0003 결정 9). SDK 로거(`com.agentclientprotocol`)는 INFO 아래로 내리지 않는다. DEBUG와 TRACE는 JSON-RPC 페이로드를 그대로 남기기 때문이다.
+- 프로세스 트리: SDK는 띄운 프로세스를 알려 주지 않는다. 그래서 어댑터를 한 번에 하나씩 띄우면서 런타임의 자식 목록을 앞뒤로 비교해 찾는다. 그 자손은 1초마다 모아 둔다(`acp.ProcessTreeWatch`). 부모가 먼저 끝나 트리에서 빠진 손자(codex.exe가 남긴 git.exe)까지 끝내기 위해서다. 끝낼 때는 기록한 프로세스 중 살아 있는 것을 모두 강제로 끝낸다. `ProcessHandle`은 시작 시각까지 비교하므로 재사용된 PID를 끝내지 않는다. 로그인(`authenticate`)을 시작한 연결은 웹 브라우저(실행 파일 이름 `chrome`, `msedge`, `firefox` 등)를 기록하지도 끝내지도 않는다. codex-acp가 로그인 페이지를 어댑터 프로세스에서 열어서, 떠 있지 않던 브라우저는 어댑터의 자손이 되기 때문이다. 다만 Windows의 job object는 런타임이 끝날 때 그 브라우저도 끝낸다 (ADR 0003 결과의 위험).
 
 ### ACP client + session manager
 
 - 어댑터 프로세스마다 ACP 연결이 1개이고, 실행기가 달라도 같은 인터페이스를 쓴다. `initialize`(버전, capability) → 인증 → `session/new` 순서이며, 세부는 ADR 0003과 0004에 있다 (SCRUM-9, 23, 66).
 - (`agentId`, `sessionId`)를 매핑한다. 세션마다 진행 중인 실행은 1개이고, 새 `session/prompt`는 앞 실행의 응답을 받은 뒤에만 보낸다 (SCRUM-24).
 - 어댑터가 클라이언트에 보내는 요청에 응답한다. `session/request_permission`은 Permission broker로 넘기고, fs와 terminal 메서드는 MVP에서 광고하지 않는다.
+- SDK는 포트 `acp.AgentConnection` 뒤에 있다(ADR 0003 결정 4). SDK 구현은 `AcpSdkConnection`이고, SDK 레코드를 포트의 값으로 바꾸고 마스킹하는 일은 `AcpTranslator` 한 곳에서 한다. 위쪽(`session`)은 SDK 타입을 모른다.
+- 시작 단계는 `agentStarting {stage}`로 알린다: `spawn` → `initialize`(응답한 `protocolVersion`이 1인지 런타임이 확인한다) → `authenticate`(로그인을 실제로 할 때만) → `session_new`. 인증 단계의 조건(D8)은 [ADR 0004](adr/0004-model-authentication.md) 인증 방식 표에 있다. 어댑터가 `session/new` 응답보다 먼저 보낸 update(예: 명령 목록)는 잡아 두었다가 `sessionStarted` 뒤에 보낸다.
+- 단계마다 제한 시간이 있다 (D14, `session.AgentTimeouts`). 속성 `agentsroom.runtime.acp.*`(예: `initialize-timeout=30s`)로 바꿀 수 있고, 테스트는 짧게 둔다.
+
+  | 단계                                                                          | 제한 | 넘으면                                     |
+  | ----------------------------------------------------------------------------- | ---- | ------------------------------------------ |
+  | `initialize`                                                                  | 30초 | `ACP_INIT_FAILED`                          |
+  | 첫 `_auth/status_update` 기다리기 (어댑터가 `_meta.authStatus`를 광고할 때만) | 3초  | 상태 없이 `session/new`로 간다             |
+  | `authenticate` (브라우저 로그인)                                              | 5분  | `AUTH_FAILED`                              |
+  | `session/new`                                                                 | 60초 | `SESSION_CREATE_FAILED`                    |
+  | `stopAgent`가 취소 응답을 기다리기                                            | 5초  | 프로세스를 끝낸다                          |
+  | 프로세스 끝내기 (stdin EOF, 종료, 트리 강제 종료)                             | 10초 | —                                          |
+  | `session/prompt`                                                              | 없음 | 실행 종료는 응답으로만 판단한다 (ADR 0005) |
+
+- 에이전트마다 메일박스(가상 스레드 하나, `session.AgentController`)가 있다. 명령, 어댑터가 보낸 메시지, 오래 걸리는 단계(시작, 끝내기, 연결 확인은 각자의 스레드에서 돈다)의 결과가 모두 이 메일박스에서 하나씩 처리된다. SDK의 수신 스레드는 메시지를 넘기기만 한다: 그 스레드가 늦으면 SDK가 응답 처리도 늦추기 때문이다. 상태 변경과 그 프레임은 gateway의 publish 잠금 아래 한 단계로 나가고, `seq`도 거기서 붙는다.
+- 시작마다 세대가 새로 생긴다. 끝난 프로세스의 늦은 메시지, 응답, 단계 결과는 버리므로 새 프로세스의 이벤트에 섞이지 않는다.
+- 연결 확인(`checkConnection`)은 자기 어댑터 프로세스를 띄워 `initialize`와 첫 인증 상태까지만 보고 끝낸다. 그동안 어댑터가 끝나거나 ACP가 아닌 줄을 쓰면 정상으로 보지 않고 그 오류(`PROCESS_EXITED`, `PROTOCOL_ERROR`)를 알린다. 결과는 `connectionChecked`(모든 렌더러)로만 알리고 에이전트 상태는 바꾸지 않는다. 선택지에서 `api-key`는 뺀다.
 
 ### Event normalizer
 
 - `session/update`, 요청과 응답, 프로세스 생명주기를 AgentEvent로 바꾸고 `seq`와 `runId`를 붙인다 ([ADR 0005](adr/0005-agent-event-model.md), SCRUM-23, 66). 생성된 Java `AgentEvent` 인터페이스가 envelope 필드의 getter와 setter를 선언하므로, 이벤트 종류마다 따로 처리하지 않고 붙이고 에이전트별 마지막 `seq`를 기록한다.
 - 에이전트별 현재 상태를 계산해서 상태 저장소에 반영한다. 상태 저장소가 단일 출처다. 업스트림 `AgentStateStore`의 개념을 이어받되, broadcast 메시지는 타입 검사를 한다 (SCRUM-19).
 - 알 수 없는 update는 `unknownUpdate`로, Tool 호출은 ADR 0005의 병합 규칙대로 바꾼다. 내용을 추측해서 채우지 않는다 (SCRUM-27, 50).
+- 어댑터에서 온 문자열은 포트에서 모두 마스킹한다. 구조가 있는 값(`rawInput`, `rawOutput`, `_meta`, `content`, `modes`, `configOptions`)은 깊이와 상관없이 문자열마다 마스킹하고, 비밀처럼 보이는 키(`token`, `*_API_KEY` 등) 아래의 문자열은 통째로 가린다. id(`sessionId`, `toolCallId`, 권한 선택지의 `optionId`)는 런타임이 되돌려 줘야 하므로 받은 그대로 둔다.
+- 최근 이벤트 꼬리(`session.RecentEvents`)는 생각 청크를 빼고, 이어진 텍스트 청크를 합친다. 합친 글은 이음매 근처를 다시 마스킹하므로 두 청크에 나뉘어 온 비밀도 꼬리에서는 가려진다. 실시간 청크는 하나씩 마스킹하므로 나뉜 비밀의 조각은 각 청크에 그대로 보일 수 있다 (알려진 한계, [ADR 0005](adr/0005-agent-event-model.md) 결정 11).
 
 ### Permission broker
 
-- 대기 중인 요청을 등록한다: `permissionId` ↔ (`agentId`, JSON-RPC 요청 id) (SCRUM-33).
+- 대기 중인 요청을 등록한다: `permissionId` ↔ (`agentId`, JSON-RPC 요청 id) (SCRUM-33). 구현은 `permission.PermissionBroker`이고, 요청마다 어댑터가 기다리는 응답을 들고 있다가 사용자가 고른 선택지나 `cancelled`로 한 번만 완료한다.
 - MVP 기본 정책은 [ADR 0005](adr/0005-agent-event-model.md) 결정 7에 있다. 에이전트별 세부 정책은 post-MVP다 (SCRUM-62).
 - 실행을 취소하거나 에이전트를 끄면 대기 중인 요청 전부에 `cancelled`로 응답한다 (SCRUM-33).
+- 어댑터가 요청을 거두면(`$/cancel_request`) SDK가 기다리던 응답을 취소한다. broker는 그 요청을 잊고, 런타임은 `permissionResolved {outcome: cancelled}`로 닫는다. 그 뒤의 `respondPermission`은 `UNKNOWN_PERMISSION`이다 (ADR 0005 결정 7).
 
 ### Persistence
 
@@ -187,16 +235,16 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
 
 [ADR 0001](adr/0001-desktop-framework.md) 결정 4, 5를 구체화한 계약이다. 데스크톱 셸과 로컬 런타임이 똑같이 따른다.
 
-| 항목        | 계약                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 실행        | `<java> -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -jar <jar>`. stdin, stdout, stderr는 모두 pipe다. 셸은 런타임이 살아 있는 동안 stdin을 열어 둔다                                                                                                                                                                                                                                                                 |
-| env         | `AGENTS_ROOM_TOKEN`: 실행마다 새로 만든 32바이트 난수(base64url). `AGENTS_ROOM_DATA_DIR`: 앱 데이터 디렉터리(절대 경로). `AGENTS_ROOM_ALLOWED_ORIGINS`: 쉼표로 구분한 Origin 목록. 토큰이 없거나 43자 base64url이 아니면, 또는 데이터 디렉터리가 없거나 절대 경로가 아니면 시작하지 않는다. 이때 stdout에는 아무것도 쓰지 않고 0이 아닌 코드로 끝난다                                                                                          |
-| Origin 목록 | 배포본은 `app://bundle`이고, `desktop:dev`에서만 `http://localhost:5173`을 더한다. 변수가 없으면 `app://bundle`만 허용한다                                                                                                                                                                                                                                                                                                                     |
-| 준비 줄     | 127.0.0.1의 임시 포트에 바인딩하고, 준비되면 stdout에 `AGENTS_ROOM_READY {"port":<int>}`와 `\n`을 UTF-8로 한 번 쓴다. 그 밖의 출력(로그 전부)은 stderr로 간다. 읽는 쪽은 줄 끝의 `\r`을 지운다                                                                                                                                                                                                                                                 |
-| 렌더러 접속 | `ws://127.0.0.1:<port>/ws?token=<token>`. 토큰이 없거나 틀리면 업그레이드 전에 401이다(상수 시간 비교). Origin 헤더가 있는데 목록에 없으면 403이다. Origin이 없는 클라이언트(Node, curl)도 토큰은 있어야 한다                                                                                                                                                                                                                                  |
-| 로그        | access log는 없다. 마스킹 계층이 토큰 값, `token=`, `*_API_KEY`·`*TOKEN*`·`*SECRET*`·`Authorization` 뒤의 값, Bearer 값, `AKIA`·`ASIA`·`sk-` 형태의 키를 가린다 ([ADR 0004](adr/0004-model-authentication.md) 결정 8). logback을 거치지 않고 stderr에 쓰는 출력(`System.out`, `System.err`)도 줄마다 같은 계층을 지난다. 잡히지 않은 예외는 logback으로 남긴다                                                                                 |
-| 종료        | stdin EOF나 부모 프로세스 종료를 감지하면 열린 렌더러 연결을 먼저 닫고, Spring 컨텍스트를 닫고 끝낸다. 이때 살아 있는 자손 프로세스를 모두 죽인다. 렌더러가 연결되어 있어도 셸이 기다리는 3초 안에 끝난다. 5초 안에 끝나지 않으면 남은 자손을 죽이고 강제로 끝낸다. 셸이 살아 있으면 셸이 3초 뒤에 런타임 프로세스 트리를 먼저 끝내므로, 이 5초는 셸이 먼저 죽었을 때의 상한이다. 런타임이 코드를 실행하지 못하고 죽을 때의 정리는 아래에 있다 |
-| 개발 실행   | 런타임 빌드가 `runtime/build/dev-runtime.json`(`{"java": JDK 25의 java 경로, "jar": boot jar 경로}`)을 쓴다. 셸은 개발 중에 이 파일을 읽는다. env `AGENTS_ROOM_RUNTIME_COMMAND`(JSON 배열 argv)가 있으면 그쪽이 우선한다(테스트용, 패키징하지 않은 실행에서만)                                                                                                                                                                                 |
+| 항목        | 계약                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 실행        | `<java> -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -jar <jar>`. stdin, stdout, stderr는 모두 pipe다. 셸은 런타임이 살아 있는 동안 stdin을 열어 둔다                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| env         | `AGENTS_ROOM_TOKEN`: 실행마다 새로 만든 32바이트 난수(base64url). `AGENTS_ROOM_DATA_DIR`: 앱 데이터 디렉터리(절대 경로). `AGENTS_ROOM_ALLOWED_ORIGINS`: 쉼표로 구분한 Origin 목록. 토큰이 없거나 43자 base64url이 아니면, 또는 데이터 디렉터리가 없거나 절대 경로가 아니면 시작하지 않는다. 이때 stdout에는 아무것도 쓰지 않고 0이 아닌 코드로 끝난다. `AGENTS_ROOM_NODE`: 어댑터를 띄울 Node 실행 파일의 절대 경로로, 셸 자신의 실행 파일이다. `AGENTS_ROOM_NODE_ELECTRON=1`: 그 파일이 Electron이므로 어댑터 env에 `ELECTRON_RUN_AS_NODE=1`을 넣는다. 이 둘이 없으면 `PATH`의 node를 쓴다 ([어댑터 실행](#어댑터-실행)) |
+| Origin 목록 | 배포본은 `app://bundle`이고, `desktop:dev`에서만 `http://localhost:5173`을 더한다. 변수가 없으면 `app://bundle`만 허용한다                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 준비 줄     | 127.0.0.1의 임시 포트에 바인딩하고, 준비되면 stdout에 `AGENTS_ROOM_READY {"port":<int>}`와 `\n`을 UTF-8로 한 번 쓴다. 그 밖의 출력(로그 전부)은 stderr로 간다. 읽는 쪽은 줄 끝의 `\r`을 지운다                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 렌더러 접속 | `ws://127.0.0.1:<port>/ws?token=<token>`. 토큰이 없거나 틀리면 업그레이드 전에 401이다(상수 시간 비교). Origin 헤더가 있는데 목록에 없으면 403이다. Origin이 없는 클라이언트(Node, curl)도 토큰은 있어야 한다                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 로그        | access log는 없다. 마스킹 계층이 토큰 값, `token=`, `*_API_KEY`·`*TOKEN*`·`*SECRET*`·`Authorization` 뒤의 값, Bearer 값, `AKIA`·`ASIA`·`sk-` 형태의 키를 가린다 ([ADR 0004](adr/0004-model-authentication.md) 결정 8). logback을 거치지 않고 stderr에 쓰는 출력(`System.out`, `System.err`)도 줄마다 같은 계층을 지난다. 잡히지 않은 예외는 logback으로 남긴다                                                                                                                                                                                                                                                            |
+| 종료        | stdin EOF나 부모 프로세스 종료를 감지하면 열린 렌더러 연결을 먼저 닫고, Spring 컨텍스트를 닫고 끝낸다. 이때 살아 있는 자손 프로세스를 모두 죽인다. 렌더러가 연결되어 있어도 셸이 기다리는 3초 안에 끝난다. 5초 안에 끝나지 않으면 남은 자손을 죽이고 강제로 끝낸다. 셸이 살아 있으면 셸이 3초 뒤에 런타임 프로세스 트리를 먼저 끝내므로, 이 5초는 셸이 먼저 죽었을 때의 상한이다. 런타임이 코드를 실행하지 못하고 죽을 때의 정리는 아래에 있다                                                                                                                                                                            |
+| 개발 실행   | 런타임 빌드가 `runtime/build/dev-runtime.json`(`{"java": JDK 25의 java 경로, "jar": boot jar 경로}`)을 쓴다. 셸은 개발 중에 이 파일을 읽는다. env `AGENTS_ROOM_RUNTIME_COMMAND`(JSON 배열 argv)가 있으면 그쪽이 우선한다(테스트용, 패키징하지 않은 실행에서만)                                                                                                                                                                                                                                                                                                                                                            |
 
 - 자식 프로세스 정리를 보장하는 범위는 OS마다 다르다.
   - Windows: 런타임은 시작할 때 자기만 가진 job object(`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)에 들어간다. 그 뒤에 생기는 자식은 누가 띄우든(ACP SDK 포함) 이 job 안에서 생기고, 그 자손도 그렇다. 런타임이 어떻게 끝나든 Windows가 이 job의 프로세스를 모두 죽인다. 부모가 먼저 끝난 손자도 포함된다.
@@ -221,6 +269,10 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
 | `workspace`   | Project/Workspace service: 현재 프로젝트, 최근 목록, 스냅샷 데이터                                                               |
 | `agent`       | AgentConfig, 기본 에이전트, 정적 실행기 카탈로그(`HarnessCatalog`)                                                               |
 | `persistence` | 데이터 디렉터리의 JSON 파일(원자적 저장, 손상 파일 보존)                                                                         |
+| `harness`     | [어댑터 실행](#어댑터-실행) 명령과 설치 확인(`HarnessLauncher`), env 허용 목록(`AdapterEnvironment`)                             |
+| `acp`         | ACP 포트(`AgentConnection`)와 SDK 구현(`AcpSdkConnection`), SDK 레코드의 변환과 마스킹, 프로세스 트리 기록                       |
+| `session`     | 에이전트별 상태 기계와 이벤트(`AgentController`), 에이전트 명령의 경로와 스냅샷(`AgentSupervisor`), Tool 병합, 최근 이벤트 꼬리  |
+| `permission`  | Permission broker: 대기 중인 권한 요청                                                                                           |
 
 - 메시지 타입은 `core/asyncapi.yaml`에서 생성한 Java 바인딩(패키지 `agentsroom.contract`)이다 ([ADR 0005](adr/0005-agent-event-model.md) 결정 11).
   - Gradle 작업 `generateContractBindings`가 빌드 때 루트에서 `node --import tsx scripts/generate-messages.ts --java`(`npm run asyncapi:generate:java`와 같은 명령)를 실행해 `runtime/build/generated/sources/contract`에 만든다. 커밋하지 않는다. npm과 cmd.exe를 거치지 않으므로 Windows와 Linux에서 인자와 따옴표 처리가 같다.
@@ -231,19 +283,22 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
   - 그다음 Jackson 기본 제한(깊이 500, 숫자 길이 1000, 이름 길이 50000)으로 트리를 읽는다. 제한을 넘으면 "Frame exceeds the runtime's JSON limits", 같은 키가 두 번 나오면 "'path' appears twice"처럼 그 키 이름으로 거절한다. "Frame is not JSON"은 `JSON.parse`도 받지 않는 프레임에만 쓴다.
 - 명령은 형식 → id → 구현 여부 순서로 확인한다 ([ADR 0005](adr/0005-agent-event-model.md) 결정 2).
   - 형식이 틀리거나 모르는 명령이면 `INVALID_MESSAGE`, 모르는 `projectId`면 `UNKNOWN_PROJECT`, 모르는 `agentId`면 `UNKNOWN_AGENT`, 대기 중이 아닌 `permissionId`면 `UNKNOWN_PERMISSION`이다.
-  - 아는 `projectId`는 최근 목록에 있는 프로젝트다(이번 실행 전용 id 포함). 아는 `agentId`는 현재 프로젝트의 에이전트다. `saveAgentConfig`가 둘 다 담으면 그 에이전트가 그 프로젝트의 것이어야 한다. 에이전트가 아직 실행되지 않으므로 대기 중인 권한 요청은 없고, `respondPermission`은 늘 `UNKNOWN_PERMISSION`이다.
+  - 아는 `projectId`는 최근 목록에 있는 프로젝트다(이번 실행 전용 id 포함). 아는 `agentId`는 현재 프로젝트의 에이전트다. `saveAgentConfig`가 둘 다 담으면 그 에이전트가 그 프로젝트의 것이어야 한다. 아는 `permissionId`는 아직 응답하지 않은 권한 요청이다.
   - `commandRejected`는 명령의 `type`과, 명령에 들어 있던 `agentId`·`projectId`·`permissionId`(`saveAgentConfig`는 `config` 안의 값)를 돌려준다. `message`는 마스킹 계층을 거치고, 필드 이름은 쓰지만 값은 옮기지 않는다. id는 자기 필드로만 돌아간다.
-- 지금 처리하는 명령은 `openProject`뿐이다. 연결될 때마다 먼저 `snapshot`을 보낸다. 성공하면 모든 렌더러에 `projectOpened`와 `agentsUpdated`를 보내고, 실패하면 보낸 렌더러에만 `projectOpenFailed`를 보낸다. 계약의 다른 명령은 id를 확인한 뒤 `commandRejected`(`NOT_IMPLEMENTED`)로 답한다.
+- 연결될 때마다 먼저 `snapshot`을 보낸다. 에이전트마다 지금 상태와 최근 이벤트 꼬리가 들어 있다.
+- `openProject`가 성공하면 모든 렌더러에 `projectOpened`와 `agentsUpdated`를 보내고, 실패하면 보낸 렌더러에만 `projectOpenFailed`를 보낸다. 현재 프로젝트의 에이전트가 돌고 있으면 다른 프로젝트는 열지 않는다(`INVALID_STATE`).
+- `startAgent`, `stopAgent`, `sendPrompt`, `checkConnection`, `respondPermission`은 그 에이전트의 메일박스로 간다. 결과는 이벤트(`agentEvent`)나 `connectionChecked`로 모든 렌더러에 나가고, 지금 상태에서 받을 수 없는 명령은 보낸 렌더러에만 `commandRejected`(`INVALID_STATE`)로 답한다. 전이는 [ADR 0005](adr/0005-agent-event-model.md)의 전이표대로다.
+- `cancelRun`, `relocateProject`, `saveAgentConfig`는 id를 확인한 뒤 `commandRejected`(`NOT_IMPLEMENTED`)로 답한다 (SCRUM-24, 32, 25).
 - `AgentSummary`의 `readiness`, `reportsToolDetails`, `reportsSubagentSessions`는 정적 실행기 카탈로그(`HarnessCatalog`)에서 온다 ([ux.md](ux.md#관찰한-것만-보여준다) R3, R4).
   - 카탈로그는 `codex`를 `openai` + `chat-gpt`로 실행한다. codex-acp는 Tool 호출에 kind와 status를 붙여 보내므로 `reportsToolDetails: true`다. agents-room이 `subagents` capability를 광고하지 않으면 서브에이전트도 일반 Tool 호출로 보내고 자식 세션을 알리지 않으므로 `reportsSubagentSessions: false`다 (Sprint 0 제안).
   - 카탈로그에 없는 실행기나 조합(예: Codex + Bedrock, [ADR 0004](adr/0004-model-authentication.md)의 spike 전)은 `unsupported`다. 모르는 실행기는 두 값이 모두 `false`다.
-  - `configured`는 정적 설정이 맞고 어댑터 설치가 있을 때만 보낸다. 이 런타임은 아직 어댑터를 띄우지 못하므로, 카탈로그가 실행하는 조합도 지금은 `executable_missing`이다 (Sprint 0 중간값). 그래서 렌더러는 시작할 수 없는 에이전트에 "에이전트 시작"을 켜지 않는다.
-  - 어댑터 실행(SCRUM-23, 65)이 설치 확인(어댑터 경로와 절대 경로 `node`가 있으면 `configured`, 없으면 `executable_missing`)과 인증 상태(`auth_required`)를 붙인다.
+  - `configured`는 정적 설정이 맞고 어댑터 실행 명령을 정할 수 있을 때만 보낸다([어댑터 실행](#어댑터-실행)). 정할 수 없으면 `executable_missing`이고, 렌더러는 시작할 수 없는 에이전트에 "에이전트 시작"을 켜지 않는다. 어댑터가 "로그인 안 됨"을 알리면 `auth_required`가 된다. 이때 "에이전트 시작"이 로그인 단계를 연다 ([ADR 0004](adr/0004-model-authentication.md)).
 - 계약 테스트: 런타임이 만드는 모든 프레임과 WebSocket 대화로 받은 프레임을 `node scripts/check-contract-fixtures.mjs --verdicts <dir>`로 검사한다. `npm run contract:check`와 같은 ajv 설정이다. 그 밖에 다음을 확인한다.
   - 유효 fixture는 모두 코덱을 통과한다. 명령은 필드를 잃지 않고 바인딩되고, 서버 프레임은 fixture와 같은 JSON으로 다시 인코딩된다. 무효 명령 fixture는 모두 거절한다.
   - 형식 검사표의 명령과 필드는 생성된 클래스와 같다.
   - 유효 명령 fixture와 그 변형(필드 삭제, `null`, 다른 타입, 필드 추가)에서 코덱은 ajv와 같은 판정을 낸다.
   - Java JSON Schema 라이브러리를 쓰지 않는 이유는, 검사기가 둘이면 스키마(`if`/`then`/`else`, 타입 없는 `not`, AsyncAPI `discriminator`)를 서로 다르게 읽을 수 있어서다. node는 바인딩 생성 때문에 이미 필요하다.
+- ACP 테스트는 실제 런타임 클래스(SDK 포함)가 mock ACP agent(`e2e/desktop/fixtures/mock-acp-agent.cjs`, node로 실행)를 Codex 어댑터로 띄우고 렌더러 WebSocket으로 대화한다(`AcpAgentIntegrationTests`). mock은 시나리오 파일대로 답한다: 정상 실행, 로그인 단계, 권한 요청, 실행 중 중지, 비정상 종료, 잘못된 줄, `initialize` 무응답 등. 받은 프레임은 모두 계약 검사기로 확인한다. 상태 기계의 순서 문제(시작 단계 중 중지, 중지 중 종료, 늦은 메시지)는 가짜 연결로 확인한다(`AgentControllerTests`). node가 없으면 mock 테스트는 이유를 남기고 건너뛴다.
 - 빌드와 테스트는 루트에서 `npm run runtime:build`(빌드, 테스트, `dev-runtime.json`)와 `npm run runtime:test`로 한다. `npm run runtime:assemble`은 테스트 없이 jar와 `dev-runtime.json`만 만든다. CI의 `desktop-windows` job이 이것을 쓴다. `scripts/gradle.mjs`가 OS에 맞는 wrapper를 부른다. node가 PATH에 있어야 하고, 루트에서 먼저 `npm ci`(또는 `npm install`)를 해야 한다.
 - CI의 `runtime` job이 같은 빌드를 Windows(windows-latest)와 Linux(ubuntu-latest)에서 돌린다. Windows 전용 테스트(job object, junction, 8.3 짧은 이름)는 Windows에서 돌고 Linux에서는 건너뛴다. 볼륨에서 8.3 이름이 꺼져 있거나 `mklink /J`가 실패하면 그 테스트만 건너뛴다.
 - Gradle 빌드 캐시가 켜져 있다. 그래서 테스트 작업은 계약 검사기의 결과를 바꿀 수 있는 파일(`core/fixtures`, `core/asyncapi.yaml`, `scripts/check-contract-fixtures.mjs`, `package-lock.json`, `.nvmrc`)을 입력으로 선언한다. 이 중 하나가 바뀌면 캐시된 결과를 쓰지 않고 다시 돈다.
@@ -282,7 +337,7 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
 
 1. `startAgent {agentId}`를 받으면 AgentConfig를 확인하고 명령과 env를 구성한다. 상태는 `starting`이고, 아래 단계 중 하나가 실패하면 어댑터 프로세스 트리를 끝내고 `error`가 된다 (SCRUM-23, 66).
 2. 어댑터 프로세스를 실행한다 (`cwd` = 프로젝트 경로).
-3. `initialize`(`protocolVersion` 1, client capability)를 보내 버전을 확인하고, 인증을 확인한다 ([ADR 0004](adr/0004-model-authentication.md)).
+3. `initialize`(`protocolVersion` 1, client capability)를 보내 버전을 확인하고, 인증을 확인한다 ([ADR 0004](adr/0004-model-authentication.md)). 어댑터가 "로그인 안 됨"을 알렸거나 `session/new`가 인증을 요구하면 `authenticate`로 어댑터의 로그인(Codex는 브라우저)을 연다. 로그인을 기다리는 동안 상태는 `starting`이고 단계는 `authenticate`다. "에이전트 종료"로 그만둘 수 있다.
 4. `session/new {cwd: 절대 경로, mcpServers: []}`로 받은 `sessionId`를 `agentId`에 묶고 `ready`가 된다.
 
 ### 프롬프트에서 캐릭터까지

@@ -59,10 +59,16 @@ val contract = sourceSets.create("contract") {
     java.srcDir(generateContractBindings)
 }
 
+// The official ACP Java SDK, pinned exactly (ADR 0003 decision 2). Jackson 3 and Reactor come in at the
+// versions Spring Boot manages, which the SDK accepts (its floors are Jackson 3.0 and Reactor 3.7).
+val acpSdkVersion = "0.80.0"
+
 dependencies {
     "contractImplementation"("com.fasterxml.jackson.core:jackson-annotations")
     implementation(contract.output)
     implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("com.agentclientprotocol:acp-core:$acpSdkVersion")
+    implementation("com.agentclientprotocol:acp-json-jackson3:$acpSdkVersion")
     testImplementation("org.springframework.boot:spring-boot-starter-webflux-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
@@ -137,6 +143,18 @@ tasks.test {
     inputs.file(repoRoot.file("scripts/check-contract-fixtures.mjs")).withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(repoRoot.file("package-lock.json")).withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(repoRoot.file(".nvmrc")).withPathSensitivity(PathSensitivity.RELATIVE)
+    // The integration tests run the mock ACP agent as the Codex adapter (node, process boundary).
+    inputs.file(repoRoot.file("e2e/desktop/fixtures/mock-acp-agent.cjs")).withPathSensitivity(PathSensitivity.RELATIVE)
+    // No test starts an adapter a developer's shell names, or the installed codex-acp (D11): the test JVM
+    // fails closed like an e2e run, and blank values hide the shell's adapter variables (the launcher
+    // takes blank as unset). A test that runs an adapter names the mock as a Spring property, which wins
+    // over the environment. Should anything still reach Codex, it gets a scratch CODEX_HOME, never ~/.codex.
+    environment("AGENTS_ROOM_E2E", "1")
+    environment("AGENTS_ROOM_HARNESS_CODEX_COMMAND", "")
+    environment("AGENTS_ROOM_ADAPTERS_DIR", "")
+    environment("AGENTS_ROOM_NODE", "")
+    environment("AGENTS_ROOM_NODE_ELECTRON", "")
+    environment("CODEX_HOME", layout.buildDirectory.dir("tmp/test-codex-home").get().asFile.absolutePath)
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dagentsroom.repoRoot=$root") })
     testLogging {
         events("failed", "skipped")

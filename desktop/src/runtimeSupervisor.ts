@@ -6,8 +6,11 @@ import {
   DEV_ONLY_ENV,
   ENV_RUNTIME_ALLOWED_ORIGINS,
   ENV_RUNTIME_DATA_DIR,
+  ENV_RUNTIME_NODE,
+  ENV_RUNTIME_NODE_ELECTRON,
   ENV_RUNTIME_TOKEN,
   LOG_STDOUT_PREFIX,
+  RUNTIME_DEV_ONLY_ENV,
   RUNTIME_KILL_WAIT_MS,
   RUNTIME_QUIT_GRACE_MS,
   RUNTIME_TOKEN_BYTES,
@@ -26,6 +29,16 @@ export interface RuntimeSupervisorOptions {
   dataDir: string;
   /** `AGENTS_ROOM_ALLOWED_ORIGINS`: the renderer origins the runtime's `/ws` accepts. */
   allowedOrigins: readonly string[];
+  /**
+   * `AGENTS_ROOM_NODE`: the Electron executable that runs the ACP adapters as
+   * Node (`ELECTRON_RUN_AS_NODE=1`, announced by `AGENTS_ROOM_NODE_ELECTRON=1`).
+   */
+  adapterNode: string;
+  /**
+   * `app.isPackaged`. A packaged app drops the runtime's adapter overrides
+   * (`RUNTIME_DEV_ONLY_ENV`) from the runtime's env.
+   */
+  packaged: boolean;
   readyTimeoutMs: number;
   /** Builds the launch argv; throws `RuntimeCommandError` when there is none. */
   resolveCommand: () => string[];
@@ -123,9 +136,21 @@ export class RuntimeSupervisor {
     const env: NodeJS.ProcessEnv = { ...this.options.baseEnv };
     // Shell-only knobs. The runtime never sees them.
     for (const name of DEV_ONLY_ENV) delete env[name];
+    if (this.options.packaged) {
+      // The runtime's adapter overrides would let whoever sets the user's env choose what runs as an agent.
+      for (const name of Object.keys(env)) {
+        if (!RUNTIME_DEV_ONLY_ENV.test(name)) continue;
+        delete env[name];
+        log.shell(`${name} is ignored in a packaged app`);
+      }
+    }
     env[ENV_RUNTIME_TOKEN] = token;
     env[ENV_RUNTIME_DATA_DIR] = this.options.dataDir;
     env[ENV_RUNTIME_ALLOWED_ORIGINS] = this.options.allowedOrigins.join(',');
+    // The adapters run on the shell's own Node (ADR 0003 decision 12). The runtime
+    // adds ELECTRON_RUN_AS_NODE=1 to the adapter's env only; the runtime itself is java.
+    env[ENV_RUNTIME_NODE] = this.options.adapterNode;
+    env[ENV_RUNTIME_NODE_ELECTRON] = '1';
 
     let child: ChildProcess;
     try {

@@ -21,17 +21,22 @@ const ECHO_ENV = [
   'console.error("token=" + e.AGENTS_ROOM_TOKEN);',
   'console.error("data=" + e.AGENTS_ROOM_DATA_DIR);',
   'console.error("origins=" + e.AGENTS_ROOM_ALLOWED_ORIGINS);',
+  'console.error("node=" + e.AGENTS_ROOM_NODE + " electron=" + e.AGENTS_ROOM_NODE_ELECTRON);',
   'console.error("command-set=" + (e.AGENTS_ROOM_RUNTIME_COMMAND !== undefined));',
+  'console.error("adapter-command=" + e.AGENTS_ROOM_HARNESS_CODEX_COMMAND + " adapters=" + e.AGENTS_ROOM_ADAPTERS_DIR + " e2e=" + e.AGENTS_ROOM_E2E);',
   // Built at run time, so the shell's own "starting the runtime: <argv>" line can't match it.
   'console.error("echo-" + "done");',
 ].join(' ');
+
+/** Stands in for the shell's process.execPath. */
+const ADAPTER_NODE = path.join(os.tmpdir(), 'electron.exe');
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-function setup(script: string | null, opts: { readyTimeoutMs?: number } = {}) {
+function setup(script: string | null, opts: { readyTimeoutMs?: number; packaged?: boolean } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-supervisor-'));
   const log = new RuntimeLog(path.join(dir, 'logs'));
   const failures: RuntimeFailure[] = [];
@@ -39,12 +44,24 @@ function setup(script: string | null, opts: { readyTimeoutMs?: number } = {}) {
     log,
     dataDir: dir,
     allowedOrigins: ['app://bundle'],
+    adapterNode: ADAPTER_NODE,
+    packaged: opts.packaged ?? false,
     readyTimeoutMs: opts.readyTimeoutMs ?? 10_000,
     resolveCommand: () => {
       if (script === null) throw new RuntimeCommandError('missing', 'no command');
       return [process.execPath, '-e', script];
     },
-    baseEnv: { ...process.env, AGENTS_ROOM_RUNTIME_COMMAND: '["leaks?"]' },
+    baseEnv: {
+      ...process.env,
+      AGENTS_ROOM_RUNTIME_COMMAND: '["leaks?"]',
+      // A developer's own value never wins over the shell's.
+      AGENTS_ROOM_NODE: 'C:/elsewhere/node.exe',
+      // The runtime's adapter overrides: passed on unpackaged only, in any case.
+      AGENTS_ROOM_HARNESS_CODEX_COMMAND: '["mock-agent"]',
+      AGENTS_ROOM_ADAPTERS_DIR: 'C:/adapters',
+      agents_room_harness_claude_code_command: '["other-agent"]',
+      AGENTS_ROOM_E2E: '1',
+    },
     onFailure: (failure) => failures.push(failure),
   });
   cleanups.push(async () => {
@@ -82,11 +99,35 @@ describe('RuntimeSupervisor', () => {
     expect(log).toContain('token=***');
     expect(log).toContain(`data=${dir}`);
     expect(log).toContain('origins=app://bundle');
+    // The adapters' Node is the shell's own executable, run as Node (ADR 0003 decision 12).
+    expect(log).toContain(`node=${ADAPTER_NODE} electron=1`);
     // Every launch is on record with its PID (the e2e suite counts starts by it).
     expect(log).toMatch(/\[shell\] the runtime started \(pid \d+\)/);
     // Shell-only knobs never reach the runtime.
     expect(log).toContain('command-set=false');
+    // Unpackaged, the runtime's own adapter overrides pass (ADR 0003 decision 8).
+    expect(log).toContain('adapter-command=["mock-agent"] adapters=C:/adapters e2e=1');
+    expect(log).not.toContain('is ignored in a packaged app');
     expect(failures).toEqual([]);
+  });
+
+  it('drops the runtime adapter overrides in a packaged app, whatever their case', async () => {
+    const { supervisor, readLog } = setup(`${ECHO_ENV} ${READY(4323)} ${EXIT_ON_EOF}`, {
+      packaged: true,
+    });
+    supervisor.start();
+    await supervisor.waitForEndpoint();
+    await until(() => readLog().includes('echo-done'));
+
+    const log = readLog();
+    // AGENTS_ROOM_E2E stays: it only stops adapters from starting (ADR 0001 decision 5).
+    expect(log).toContain('adapter-command=undefined adapters=undefined e2e=1');
+    expect(log).toContain('[shell] AGENTS_ROOM_HARNESS_CODEX_COMMAND is ignored in a packaged app');
+    expect(log).toContain('[shell] AGENTS_ROOM_ADAPTERS_DIR is ignored in a packaged app');
+    expect(log).toContain(
+      '[shell] agents_room_harness_claude_code_command is ignored in a packaged app',
+    );
+    expect(log).not.toContain('AGENTS_ROOM_E2E is ignored');
   });
 
   it('accepts a CRLF ready line', async () => {

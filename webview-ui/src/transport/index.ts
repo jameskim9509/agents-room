@@ -1,4 +1,4 @@
-import type { ServerMessage } from '../../../core/src/messages.js';
+import type { RuntimeClientMessage, ServerMessage } from '../../../core/src/messages.js';
 import { getDesktopBridge } from '../desktopBridge.js';
 import type { LocalAssetMessage } from '../localAssets.js';
 import { isBrowserRuntime } from '../runtime.js';
@@ -60,6 +60,17 @@ export const transport: MessageTransport = desktop?.office ?? createTransport();
  * list and command results the local runtime sent (runtimeState.ts).
  */
 export const runtimeStateStore: RuntimeStateStore | null = desktop?.runtimeState ?? null;
+
+/**
+ * Desktop shell only: sends a command (ADR 0005 decision 2) to the local
+ * runtime over the runtime socket. Returns `false`, sending nothing, in the
+ * other surfaces. The answer comes back as frames in `runtimeStateStore`.
+ */
+export function sendRuntimeCommand(command: RuntimeClientMessage): boolean {
+  if (!desktop) return false;
+  desktop.sendRuntimeCommand(command);
+  return true;
+}
 
 /**
  * Deliver a frame that originates in the renderer itself (the desktop

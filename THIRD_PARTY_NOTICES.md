@@ -131,12 +131,12 @@ THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
 
 ## 추가 예정 구성요소
 
-아직 저장소에 없다. 배포에 포함할 때 버전과 라이선스를 다시 확인한다.
+아직 배포물에 넣지 않았다. 배포에 포함할 때 버전과 라이선스를 다시 확인한다.
 
 | 구성요소                                                                    | 라이선스                             | 비고                                                                                                                                                                                                                         |
 | --------------------------------------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Electron (데스크톱 셸)                                                      | 배포 시점에 확인해 기재한다          | Electron 배포물에 들어 있는 라이선스 파일(Chromium 포함)을 함께 싣는다 ([ADR 0001](docs/adr/0001-desktop-framework.md))                                                                                                      |
 | JRE, Spring                                                                 | 배포 시점에 확인해 기재한다          | [ADR 0002](docs/adr/0002-java-spring-runtime.md)                                                                                                                                                                             |
-| [ACP Java SDK](https://github.com/agentclientprotocol/java-sdk)             | Apache-2.0 (2026-10-20 기준)         | 로컬 런타임의 ACP Client                                                                                                                                                                                                     |
-| [codex-acp](https://github.com/agentclientprotocol/codex-acp)               | Apache-2.0 (2026-10-23 확인)         | Codex(`@openai/codex`, Apache-2.0)를 함께 담는다. 설치 파일에 동봉한다 ([ADR 0003](docs/adr/0003-acp-integration.md) 결정 12)                                                                                                |
+| [ACP Java SDK](https://github.com/agentclientprotocol/java-sdk)             | Apache-2.0 (2026-10-20 기준)         | 로컬 런타임의 ACP Client. `acp-core`와 `acp-json-jackson3` 0.80.0이 런타임 jar에 들어간다                                                                                                                                    |
+| [codex-acp](https://github.com/agentclientprotocol/codex-acp)               | Apache-2.0 (2026-10-23 확인)         | Codex(`@openai/codex`, Apache-2.0)를 함께 담는다. 설치 파일에 동봉한다 ([ADR 0003](docs/adr/0003-acp-integration.md) 결정 12). 개발 중에는 `tools/adapters/`에 2.2.2를 받아 쓴다 (저장소에는 `package.json`과 lock만 있다)   |
 | [claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) | Apache-2.0 (어댑터, 2026-10-23 확인) | 의존하는 `@anthropic-ai/claude-agent-sdk`는 Anthropic 독점 라이선스("All rights reserved")이고 Claude Code 실행 파일을 담는다. 조건을 확인하기 전까지 동봉하지 않는다 ([ADR 0003](docs/adr/0003-acp-integration.md) 결정 12) |

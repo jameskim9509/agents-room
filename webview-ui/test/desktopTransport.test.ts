@@ -140,6 +140,17 @@ test('nothing the office sends reaches the runtime, webviewReady included', asyn
   office.dispose();
 });
 
+test('a runtime command goes out on the runtime socket as the contract frame', async () => {
+  const { office, sendRuntimeCommand, socket } = await connect();
+
+  sendRuntimeCommand({ type: 'openProject', path: 'C:\\work\\demo' });
+
+  expect(socket.sent.map((data) => JSON.parse(data) as unknown)).toEqual([
+    { type: 'openProject', path: 'C:\\work\\demo' },
+  ]);
+  office.dispose();
+});
+
 test('local frames reach the office subscriber that stays, after StrictMode churn', async () => {
   const { office } = await connect();
   office.deliver({ type: 'layoutLoaded', layout: null });

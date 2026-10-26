@@ -137,6 +137,11 @@ public class WorkspaceService {
         return current.agents().stream().filter(agent -> agent.agentId().equals(agentId)).findFirst();
     }
 
+    /** The real path of the current project, the cwd of its agents; empty while none is open. */
+    public synchronized Optional<String> currentProjectPath() {
+        return current == null ? Optional.empty() : Optional.of(current.project().path());
+    }
+
     /** The current state, for the snapshot a renderer gets on every connect. In memory only. */
     public synchronized WorkspaceSnapshot snapshot() {
         List<RecentProject> shown = recentProjects.subList(0, Math.min(RECENT_PROJECTS_SHOWN, recentProjects.size()));

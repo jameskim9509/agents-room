@@ -56,7 +56,7 @@ npm test           # webview·server·desktop Vitest와 패키지 계약 테스�
 - 렌더러만 개발: `cd webview-ui && npm run dev`. Vite dev 서버와 browser mock으로 백엔드 없이 UI를 띄운다.
 - 데스크톱 셸: `npm run desktop:start`(렌더러와 셸을 빌드해 `app://bundle`로 띄운다), `npm run desktop:dev`(Vite dev 서버와 Electron). 로컬 런타임은 `runtime/build/dev-runtime.json`이나 환경변수 `AGENTS_ROOM_RUNTIME_COMMAND`(JSON argv)로 찾는다. 처음에는 `npm run electron:install -w agents-room-desktop`으로 Electron 실행 파일을 받는다. 셸 e2e는 `npm run desktop:build` 뒤 `npm run e2e:desktop`이다. 실제 런타임과 붙는 spec은 `npm run runtime:build`(또는 `npm run runtime:assemble`)를 먼저 해야 돌고, 하지 않으면 건너뛴다 → [architecture.md](docs/architecture.md#데스크톱-셸).
 - e2e: 빌드한 뒤 `npm run e2e`. 첫 실행 때 VS Code를 내려받는다. standalone 테스트에는 Playwright Chromium이 필요하다 (`npx playwright install chromium`).
-- 로컬 런타임: `npm install` 뒤 `npm run runtime:build`(빌드와 테스트), `npm run runtime:test`, `npm run runtime:assemble`(테스트 없이 jar와 `dev-runtime.json`만). JDK 17 이상이 필요하고, 빌드가 node로 계약 바인딩을 만든다 → [로컬 런타임 코드 구성](docs/architecture.md#로컬-런타임-코드-구성).
+- 로컬 런타임: `npm install` 뒤 `npm run runtime:build`(빌드와 테스트), `npm run runtime:test`, `npm run runtime:assemble`(테스트 없이 jar와 `dev-runtime.json`만). JDK 17 이상이 필요하고, 빌드가 node로 계약 바인딩을 만든다 → [로컬 런타임 코드 구성](docs/architecture.md#로컬-런타임-코드-구성). 런타임이 Codex를 띄우려면 `npm run adapters:install`로 고정 버전의 codex-acp를 `tools/adapters/`에 받는다(약 450 MB이고, 루트의 `npm install`은 받지 않는다). 셸이 띄운 런타임은 셸의 Electron을 Node로 써서 어댑터를 띄우고, jar를 직접 띄우면 `PATH`의 node를 쓴다. 런타임은 사용자의 Codex 로그인을 그대로 쓰고, 로그인이 없으면 시작할 때 Codex가 브라우저 로그인을 연다 → [어댑터 실행](docs/architecture.md#어댑터-실행).
 - `npm run import-tileset`은 쓰지 않는다 (스크립트 파일이 없다).
 - 색, 그림자, 폰트 규칙은 ESLint(`eslint-rules/pixel-agents-rules.mjs`)가 강제한다 → [docs/ux.md](docs/ux.md#상속한-시각-요소).
 

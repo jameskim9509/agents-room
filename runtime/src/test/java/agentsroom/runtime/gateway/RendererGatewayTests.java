@@ -2,9 +2,11 @@ package agentsroom.runtime.gateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import agentsroom.runtime.harness.HarnessLauncher;
 import agentsroom.runtime.shell.ShellLinkConfiguration;
 import agentsroom.runtime.testsupport.ContractSchema;
 import agentsroom.runtime.testsupport.ContractSchema.Verdict;
+import agentsroom.runtime.testsupport.TestRenderer;
 import io.netty.handler.codec.http.websocketx.WebSocketClientHandshakeException;
 import java.io.IOException;
 import java.net.URI;
@@ -18,13 +20,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
@@ -68,15 +67,27 @@ class RendererGatewayTests {
     private static final int CLIENT_MAX_FRAME_BYTES = 1024 * 1024;
     private static final Path DATA_DIR = createTempDirectory();
 
+    /** An adapters folder without the adapter: Codex is "executable_missing" whatever this machine has. */
+    private static final Path NO_ADAPTERS = createTempDirectory();
+
+    /**
+     * The launcher looks for the installed adapter, in a folder that has none: no override (blank
+     * hides a developer's), and not the fail-closed e2e mode the Gradle test task sets.
+     */
     @DynamicPropertySource
     static void dataDirectory(DynamicPropertyRegistry registry) {
         registry.add("AGENTS_ROOM_DATA_DIR", DATA_DIR::toString);
+        registry.add(HarnessLauncher.ADAPTERS_DIR, NO_ADAPTERS::toString);
+        registry.add(HarnessLauncher.CODEX_COMMAND, () -> "");
+        registry.add(HarnessLauncher.E2E, () -> "");
     }
 
     @AfterAll
     static void deleteDataDirectory() throws IOException {
-        try (Stream<Path> paths = Files.walk(DATA_DIR)) {
-            paths.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+        for (Path dir : List.of(DATA_DIR, NO_ADAPTERS)) {
+            try (Stream<Path> paths = Files.walk(dir)) {
+                paths.sorted(Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+            }
         }
     }
 
@@ -168,7 +179,7 @@ class RendererGatewayTests {
         assertThat(agent.get("harnessId").asString()).isEqualTo("codex");
         assertThat(agent.get("projectId").asString()).isEqualTo(project.get("projectId").asString());
         assertThat(agent.get("modelId").isNull()).isTrue();
-        assertThat(agent.get("readiness").asString()).as("no adapter launch yet").isEqualTo("executable_missing");
+        assertThat(agent.get("readiness").asString()).as("no adapter installed").isEqualTo("executable_missing");
         assertThat(agent.get("reportsToolDetails").asBoolean()).isTrue();
         assertThat(agent.get("reportsSubagentSessions").asBoolean()).isFalse();
 
@@ -227,11 +238,12 @@ class RendererGatewayTests {
     }
 
     /**
-     * The commands this runtime does not handle yet still get their ids checked, and every frame of the
-     * conversation is an agents-room frame of {@code core/asyncapi.yaml}.
+     * Every command gets its ids checked first, then its state (an offline agent cannot be stopped or
+     * prompted) or whether it is wired yet, and every frame of the conversation is an agents-room frame of
+     * {@code core/asyncapi.yaml}.
      */
     @Test
-    void checksTheIdsOfTheCommandsItDoesNotHandleYetAndAnswersInContractFrames() throws Exception {
+    void checksTheIdsAndTheStateOfCommandsAndAnswersInContractFrames() throws Exception {
         Path folder = Files.createDirectories(projects.resolve("ids"));
         TestRenderer renderer = TestRenderer.connect(uri(TOKEN));
         renderer.next();
@@ -244,16 +256,17 @@ class RendererGatewayTests {
         record Case(String command, String reason, String agentId, String projectId, String permissionId) {
         }
         List<Case> cases = List.of(
-                new Case(command("checkConnection", "agentId", agentId), "NOT_IMPLEMENTED", agentId, null, null),
-                new Case(command("startAgent", "agentId", agentId), "NOT_IMPLEMENTED", agentId, null, null),
-                new Case(command("stopAgent", "agentId", agentId), "NOT_IMPLEMENTED", agentId, null, null),
-                new Case(command("sendPrompt", "agentId", agentId, "text", "hi"), "NOT_IMPLEMENTED", agentId, null,
+                // The agent is offline: there is nothing to stop or prompt (ADR 0005 transition table).
+                new Case(command("stopAgent", "agentId", agentId), "INVALID_STATE", agentId, null, null),
+                new Case(command("sendPrompt", "agentId", agentId, "text", "hi"), "INVALID_STATE", agentId, null,
                         null),
                 new Case(command("cancelRun", "agentId", agentId, "runId", unknown), "NOT_IMPLEMENTED", agentId, null,
                         null),
                 // Nothing runs, so no permission request is pending.
                 new Case(command("respondPermission", "permissionId", unknown, "optionId", "approved"),
                         "UNKNOWN_PERMISSION", null, null, unknown),
+                new Case(command("checkConnection", "agentId", unknown), "UNKNOWN_AGENT", unknown, null, null),
+                new Case(command("stopAgent", "agentId", unknown), "UNKNOWN_AGENT", unknown, null, null),
                 new Case(command("relocateProject", "projectId", projectId, "path", path), "NOT_IMPLEMENTED", null,
                         projectId, null),
                 new Case(saveAgentConfig(projectId, null), "NOT_IMPLEMENTED", null, projectId, null),
@@ -286,6 +299,46 @@ class RendererGatewayTests {
 
         List<String> received = renderer.texts();
         assertThat(received).hasSize(3 + cases.size());
+        List<Verdict> verdicts = ContractSchema.validateServerMessages(received);
+        for (int i = 0; i < received.size(); i++) {
+            assertThat(verdicts.get(i).isAgentsRoomMessage()).as("%s %s", received.get(i), verdicts.get(i).errors())
+                    .isTrue();
+        }
+    }
+
+    /**
+     * Without the adapter installed, a start fails at its first stage and a connection check says so; the
+     * agent never looks started (SCRUM-36, ADR 0005 transition table).
+     */
+    @Test
+    void withoutTheAdapterAStartFailsAtSpawnAndTheCheckSaysWhatIsMissing() throws Exception {
+        Path folder = Files.createDirectories(projects.resolve("no-adapter"));
+        TestRenderer renderer = TestRenderer.connect(uri(TOKEN));
+        renderer.next();
+        renderer.send(openProject(folder.toString()));
+        renderer.next();
+        String agentId = renderer.next().get("agents").get(0).get("agentId").asString();
+
+        renderer.send(command("checkConnection", "agentId", agentId));
+        JsonNode checked = renderer.next();
+        renderer.send(command("startAgent", "agentId", agentId));
+        List<JsonNode> events = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            events.add(renderer.next().get("event"));
+        }
+        renderer.close();
+
+        assertThat(checked.get("type").asString()).isEqualTo("connectionChecked");
+        assertThat(checked.get("readiness").asString()).isEqualTo("executable_missing");
+        assertThat(checked.get("error").get("code").asString()).isEqualTo("EXECUTABLE_MISSING");
+        assertThat(checked.get("error").get("message").asString()).contains("npm run adapters:install");
+        assertThat(events).extracting(event -> event.get("kind").asString())
+                .containsExactly("agentStatusChanged", "agentStarting", "agentError", "agentStatusChanged");
+        assertThat(events.get(2).get("data").get("code").asString()).isEqualTo("EXECUTABLE_MISSING");
+        assertThat(events.get(2).get("data").get("stage").asString()).isEqualTo("spawn");
+        assertThat(events.get(3).get("data").get("status").asString()).isEqualTo("error");
+        assertThat(events).extracting(event -> event.get("seq").asLong()).containsExactly(1L, 2L, 3L, 4L);
+        List<String> received = renderer.texts();
         List<Verdict> verdicts = ContractSchema.validateServerMessages(received);
         for (int i = 0; i < received.size(); i++) {
             assertThat(verdicts.get(i).isAgentsRoomMessage()).as("%s %s", received.get(i), verdicts.get(i).errors())
@@ -449,67 +502,6 @@ class RendererGatewayTests {
         while (!condition.getAsBoolean()) {
             assertThat(System.nanoTime()).as("condition within %s", TIMEOUT).isLessThan(deadline);
             Thread.sleep(20);
-        }
-    }
-
-    /** A renderer on the JDK WebSocket client (no Origin header), queueing every frame it gets. */
-    private static final class TestRenderer implements WebSocket.Listener {
-
-        private final JsonMapper json = JsonMapper.builder().build();
-        private final BlockingQueue<JsonNode> frames = new LinkedBlockingQueue<>();
-        private final List<String> texts = new CopyOnWriteArrayList<>();
-        private final StringBuilder partial = new StringBuilder();
-        private final AtomicInteger received = new AtomicInteger();
-        private WebSocket socket;
-
-        static TestRenderer connect(URI uri) throws Exception {
-            TestRenderer renderer = new TestRenderer();
-            renderer.socket = HttpClient.newHttpClient()
-                    .newWebSocketBuilder()
-                    .buildAsync(uri, renderer)
-                    .get(TIMEOUT.toSeconds(), TimeUnit.SECONDS);
-            return renderer;
-        }
-
-        @Override
-        public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-            partial.append(data);
-            if (last) {
-                texts.add(partial.toString());
-                frames.add(json.readTree(partial.toString()));
-                partial.setLength(0);
-                received.incrementAndGet();
-            }
-            webSocket.request(1);
-            return null;
-        }
-
-        JsonNode next() throws InterruptedException {
-            JsonNode frame = poll(TIMEOUT);
-            assertThat(frame).as("a frame within %s", TIMEOUT).isNotNull();
-            return frame;
-        }
-
-        /** The next frame, or {@code null} when none comes within {@code wait}. */
-        JsonNode poll(Duration wait) throws InterruptedException {
-            return frames.poll(wait.toMillis(), TimeUnit.MILLISECONDS);
-        }
-
-        int received() {
-            return received.get();
-        }
-
-        /** Every frame received so far, as sent. */
-        List<String> texts() {
-            return List.copyOf(texts);
-        }
-
-        void send(String text) {
-            socket.sendText(text, true).join();
-        }
-
-        void close() {
-            socket.sendClose(WebSocket.NORMAL_CLOSURE, "done").join();
         }
     }
 

@@ -102,7 +102,15 @@ public final class SecretMasker {
         return out.append(text, copied, text.length()).toString();
     }
 
-    private static boolean isSecretName(String name) {
+    /**
+     * Whether a key name looks like it holds a secret: {@code *_API_KEY}, {@code *TOKEN*},
+     * {@code *SECRET*} or {@code *Authorization}, in any case. The masking of structured adapter values
+     * uses it for object keys, whose values a text pattern cannot see.
+     */
+    public static boolean isSecretName(String name) {
+        if (name == null) {
+            return false;
+        }
         String lower = name.toLowerCase(Locale.ROOT);
         return lower.contains("_api_key") || lower.contains("token") || lower.contains("secret")
                 || lower.endsWith("authorization");

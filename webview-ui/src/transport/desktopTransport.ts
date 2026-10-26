@@ -65,6 +65,8 @@ class DesktopOfficeTransport implements MessageTransport {
 export interface DesktopTransports {
   office: DesktopOfficeTransport;
   runtimeState: RuntimeStateStore;
+  /** Sends a command to the runtime; queued while the socket is not open. */
+  sendRuntimeCommand: (command: RuntimeClientMessage) => void;
 }
 
 /**
@@ -88,5 +90,9 @@ export function createDesktopTransports(bridge: AgentsRoomBridge): DesktopTransp
   });
   const runtimeState = createRuntimeStateStore(runtime);
   runtime.connect();
-  return { office: new DesktopOfficeTransport(runtime), runtimeState };
+  return {
+    office: new DesktopOfficeTransport(runtime),
+    runtimeState,
+    sendRuntimeCommand: (command) => runtime.send(command),
+  };
 }

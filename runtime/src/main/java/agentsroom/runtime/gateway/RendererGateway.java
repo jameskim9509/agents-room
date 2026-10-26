@@ -2,6 +2,7 @@ package agentsroom.runtime.gateway;
 
 import agentsroom.contract.ClientMessage;
 import agentsroom.contract.ServerMessage;
+import agentsroom.runtime.session.StatePublisher;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,7 +36,7 @@ import reactor.core.scheduler.Schedulers;
  * open connections until its timeout, so a connected renderer, which the desktop app always has
  * while it quits, would otherwise hold the exit after stdin EOF past the shell's 3 s grace.
  */
-public final class RendererGateway implements WebSocketHandler, SmartLifecycle {
+public final class RendererGateway implements WebSocketHandler, SmartLifecycle, StatePublisher {
 
     private static final Logger log = LoggerFactory.getLogger(RendererGateway.class);
 
@@ -91,6 +92,7 @@ public final class RendererGateway implements WebSocketHandler, SmartLifecycle {
      * @param change mutates the state and returns the frames to broadcast, in order. It runs under
      *     the publish lock, so it must stay short: no slow disk or network work.
      */
+    @Override
     public void publish(Supplier<List<ServerMessage>> change) {
         synchronized (publishLock) {
             change.get().forEach(this::broadcast);
