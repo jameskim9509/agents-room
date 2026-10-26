@@ -111,6 +111,14 @@ THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
 
 - 라이선스와 저작권 표기: 저장소에 별도 라이선스가 없으므로 Pixel Agents MIT를 따르는 것으로 본다 (추정, 업스트림 확인 필요).
 
+## Gradle Wrapper
+
+- 대상: `runtime/gradlew`, `runtime/gradlew.bat`, `runtime/gradle/wrapper/gradle-wrapper.jar` (Gradle 9.8.2)
+- 출처: [Gradle](https://gradle.org/). `gradle-wrapper.jar`의 SHA-256(`3b8a2577…`)은 Gradle이 공개한 9.8.2 값과 같다 (2026-10-25 확인).
+- 라이선스: [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- 저작권 표기: `Copyright © 2015 the original authors.` (`gradlew`), `Copyright 2015 the original author or authors.` (`gradlew.bat`)
+- 비고: 런타임을 빌드할 때만 쓰고 배포물에는 들어가지 않는다. wrapper가 내려받는 Gradle 배포판은 `gradle-wrapper.properties`의 `distributionSha256Sum`으로 검증된다.
+
 ## 빌드 산출물의 npm 패키지
 
 상속한 빌드 산출물은 제3자 npm 패키지를 번들한다. 예는 아래와 같다.

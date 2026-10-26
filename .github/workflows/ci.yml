@@ -5,7 +5,9 @@
 # matrix (VS Code and standalone specs) and the Vercel Allure preview are gone.
 # The inherited e2e suite now runs only locally (npm run e2e). The Windows
 # desktop e2e job arrives with the desktop shell PR; macOS and Linux come with
-# SCRUM-64 (docs/adr/0001-desktop-framework.md, decision 7).
+# SCRUM-64 (docs/adr/0001-desktop-framework.md, decision 7). The runtime job
+# builds and tests the Java/Spring local runtime (runtime/) on Windows and
+# Linux.
 
 name: CI
 
@@ -247,6 +249,60 @@ jobs:
           done
           exit "$failed"
 
+  # The Java/Spring local runtime (runtime/, ADR 0002). `npm run runtime:build`
+  # compiles, tests and packages it. The Gradle build generates the Java
+  # bindings of core/asyncapi.yaml with node (ADR 0005 decision 11), and the
+  # contract tests validate the runtime's frames with
+  # scripts/check-contract-fixtures.mjs, so the job needs npm ci as well as
+  # JDK 25. Windows is the MVP platform (ADR 0002) and the only one where the
+  # Windows-only tests (job object, junctions, 8.3 short names) run; on Linux
+  # they skip themselves. fail-fast is off so that one OS failing still
+  # reports the other.
+  runtime:
+    name: Runtime (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Gradle finds this JDK 25, so its toolchain resolver downloads nothing.
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+          cache-dependency-path: |
+            runtime/*.gradle.kts
+            runtime/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build And Test Runtime
+        run: npm run runtime:build
+
+      - name: Upload Test Reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-test-reports-${{ matrix.os }}
+          path: runtime/build/reports/tests/test/
+          retention-days: 7
+
   # Single aggregate status check: one name to watch instead of every job name
   # (which silently breaks when a job is renamed). Green only when every job in
   # `needs` succeeded, so a new job (the Windows desktop job, for one) only has
@@ -259,6 +315,7 @@ jobs:
     if: always()
     needs:
       - ci
+      - runtime
     runs-on: ubuntu-latest
     steps:
       - name: Verify all required jobs succeeded

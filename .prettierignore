@@ -9,3 +9,5 @@ webview-ui/dist/
 webview-ui/public/
 scripts/*.html
 
+runtime/build/
+runtime/.gradle/
