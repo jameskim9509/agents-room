@@ -12,6 +12,10 @@ agents-room의 변경 기록이다. 형식은 [Keep a Changelog](https://keepach
 
 - Sprint 0을 마감하고 스프린트 번호를 고쳤다 (2026-10-26): Sprint 0의 미완료 스토리 8개를 새 SCRUM Sprint 1(2026-10-26 – 2026-11-02, 같은 목표)로 옮겼고, 원래 Sprint 1은 Sprint 2로, 원래 Sprint 2는 Sprint 3으로 바꿨다. README의 현재 상태와, 원래 Sprint 1을 가리키던 곳(architecture.md, ux.md, `core/asyncapi.yaml`과 `desktop/src/runtimeCommand.ts`의 주석)을 고쳤다.
 
+### Fixed
+
+- 캐릭터 이름 라벨, 에이전트 카드, Detail Panel 헤더가 에이전트 이름 옆에 같은 글자의 실행기 배지를 붙여, 기본 Codex 에이전트가 "Codex Codex · 실행 중"으로 보였다 (SCRUM-27). 이제 세 곳 모두 `agentIdentity`(`webview-ui/src/desktopUi/agentControls.ts`) 한 규칙을 쓴다: 이름이 배지 글자(`agentInfo.title`, title이 없으면 `agentInfo.name`, 보고 전에는 `harnessId`)와 같으면(앞뒤 공백을 빼고 대소문자 무시) 이름만 한 번 쓰고, 카드와 헤더에서는 이름의 툴팁 "실행기: Codex"로 실행기를 알린다. 이름이 다르면("Gemini"와 `gemini-cli`) 배지를 그대로 둔다. 규칙은 ux.md의 [여러 에이전트 구분](docs/ux.md#여러-에이전트-구분)에 제안으로 적었고, 단위 테스트와 `e2e/desktop/panels.spec.ts`의 라벨 단언(이름이 실행기와 다른 두 번째 에이전트 포함)을 고쳤다.
+
 ## [Sprint 0] - 2026-10-26
 
 완료 처리한 키: 없음. SCRUM-18, 19, 21, 22, 23, 27, 31, 65는 구현을 머지했지만(#3, #8–#13), 실제 ChatGPT 로그인 확인이 남아 Sprint 1로 이월했다.

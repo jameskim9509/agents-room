@@ -7,7 +7,7 @@ import type {
 } from '../../../core/src/messages.js';
 import { Button } from '../components/ui/Button.js';
 import { DETAIL_EVENTS_MAX_HEIGHT_PX, EVENTS_END_SLACK_PX } from '../constants.js';
-import { harnessBadge, STATUS_DOT_CLASS } from './agentControls.js';
+import { agentIdentity, STATUS_DOT_CLASS } from './agentControls.js';
 import type { AgentView } from './agentView.js';
 import {
   currentToolText,
@@ -399,6 +399,7 @@ export function DetailPanel({
     );
   }
   const { agent } = view;
+  const identity = agentIdentity(view);
   const tool = currentToolText(view);
   const run = runStatus(view);
   const model = reportedModel(view);
@@ -420,15 +421,22 @@ export function DetailPanel({
         <span className="text-2xs text-text-muted">{T.agentName}</span>
         <div className="flex items-center gap-6 min-w-0">
           <span className={`w-8 h-8 shrink-0 ${STATUS_DOT_CLASS[view.status]}`} />
-          <span className="text-base text-text truncate" data-testid="detail-agent-name">
-            {agent.name}
-          </span>
           <span
-            className="text-2xs text-text-muted border-2 border-border px-4 shrink-0"
-            title={T.harnessLabel}
+            className="text-base text-text truncate"
+            title={identity.nameTitle ?? undefined}
+            data-testid="detail-agent-name"
           >
-            {harnessBadge(view)}
+            {identity.name}
           </span>
+          {identity.badge !== null && (
+            <span
+              className="text-2xs text-text-muted border-2 border-border px-4 shrink-0"
+              title={T.harnessLabel}
+              data-testid="detail-agent-harness"
+            >
+              {identity.badge}
+            </span>
+          )}
         </div>
         <div className="text-2xs flex flex-wrap gap-x-8">
           <span>

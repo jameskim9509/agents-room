@@ -334,14 +334,14 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 
 ### `@area:desktop-ui` (8 tests)
 
-- `e2e/desktop/panels.spec.ts:304` — the start screen opens a project through the folder picker: cancel keeps it, a bad folder shows why, a good one shows name, path and tree (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:410` — a run shows its request, session state, current tool by kind, events in order and the final response, and the character follows it (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:520` — a permission request is answered with the buttons of its options, and a click on the character keeps it (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:570` — a run that streams more events than the lists hold keeps its state, the whole answer and the open project (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:632` — a sign-in that fails reads as an authentication failure at the sign-in stage, apart from a run failure (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:658` — a session that cannot be created reads as such, with the stage and the generic action (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:680` — during a long run the window resizes and a character click selects it; an adapter crash shows the error and the app keeps working (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:789` — the sign-in stage asks for the browser login, and "에이전트 종료" ends it (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:309` — the start screen opens a project through the folder picker: cancel keeps it, a bad folder shows why, a good one shows name, path and tree (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:422` — a run shows its request, session state, current tool by kind, events in order and the final response, and the character follows it (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:542` — a permission request is answered with the buttons of its options, and a click on the character keeps it (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:592` — a run that streams more events than the lists hold keeps its state, the whole answer and the open project (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:654` — a sign-in that fails reads as an authentication failure at the sign-in stage, apart from a run failure (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:680` — a session that cannot be created reads as such, with the stage and the generic action (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:702` — during a long run the window resizes and a character click selects it; an adapter crash shows the error and the app keeps working (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:818` — the sign-in stage asks for the browser login, and "에이전트 종료" ends it (Desktop panels and pixel world)
 
 ### `@area:pets` (3 tests)
 

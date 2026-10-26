@@ -21,7 +21,13 @@ import type {
   RuntimeServerMessage,
   Snapshot,
 } from '../../core/src/messages.ts';
-import { canCheck, canStart, canStop, harnessBadge } from '../src/desktopUi/agentControls.ts';
+import {
+  agentIdentity,
+  canCheck,
+  canStart,
+  canStop,
+  harnessBadge,
+} from '../src/desktopUi/agentControls.ts';
 import { deriveAgentView, deriveAgentViews, toolBehaviour } from '../src/desktopUi/agentView.ts';
 import {
   agentSubject,
@@ -525,6 +531,91 @@ describe('agent controls', () => {
       ),
     );
     expect(harnessBadge(v)).toBe('Codex');
+  });
+});
+
+describe('agent identity (ux.md 에이전트 이름 식별)', () => {
+  /** This agent saved as `name` (and `harnessId`), after `agentEvents`. */
+  const named = (name: string, harnessId = SUMMARY.harnessId, ...agentEvents: AgentEvent[]) =>
+    view(
+      applyRuntimeFrame(stateWith(...agentEvents), {
+        type: 'agentsUpdated',
+        agents: [{ ...SUMMARY, name, harnessId }],
+      }),
+    );
+  /** The adapter's agentInfo on `sessionStarted`; `title` is optional in ACP. */
+  const reported = (title?: string, name = 'codex-acp') => {
+    const ev = events();
+    return ev(
+      'sessionStarted',
+      {
+        sessionId: SESSION,
+        agentInfo: { name, version: '2', ...(title === undefined ? {} : { title }) },
+      },
+      { sessionId: SESSION },
+    );
+  };
+
+  test('a name that is the harness reads once, the harness in its tooltip', () => {
+    // Before any report the badge is the harness id: "Codex" is "codex" without case.
+    expect(agentIdentity(named('Codex'))).toEqual({
+      name: 'Codex',
+      badge: null,
+      nameTitle: '실행기: codex',
+    });
+    // The adapter's title, once reported (the seeded agent's "Codex Codex").
+    expect(agentIdentity(named('Codex', 'codex', reported('Codex')))).toEqual({
+      name: 'Codex',
+      badge: null,
+      nameTitle: '실행기: Codex',
+    });
+  });
+
+  test('blanks around either side and case do not tell them apart', () => {
+    expect(agentIdentity(named('  CODEX ')).badge).toBeNull();
+    expect(agentIdentity(named('codex', 'codex', reported(' Codex  '))).badge).toBeNull();
+    // The name is shown as saved.
+    expect(agentIdentity(named('  CODEX ')).name).toBe('  CODEX ');
+  });
+
+  test('a name that differs from its harness keeps the badge, with no name tooltip', () => {
+    expect(agentIdentity(named('Gemini', 'gemini-cli'))).toEqual({
+      name: 'Gemini',
+      badge: 'gemini-cli',
+      nameTitle: null,
+    });
+    // Containing the harness name is not being it.
+    expect(agentIdentity(named('Codex 2', 'codex', reported('Codex'))).badge).toBe('Codex');
+    expect(agentIdentity(named('Reviewer', 'codex', reported('Codex'))).badge).toBe('Codex');
+    expect(agentIdentity(named('Code x')).badge).toBe('codex');
+  });
+
+  test('once reported, the name is compared with the badge text, not the harness id', () => {
+    // claude-agent-acp reports the title "Claude Agent" (ADR 0003) for the harness "claude".
+    expect(agentIdentity(named('Claude Agent', 'claude', reported('Claude Agent')))).toEqual({
+      name: 'Claude Agent',
+      badge: null,
+      nameTitle: '실행기: Claude Agent',
+    });
+    // The harness id is no longer the badge, so a name equal to it keeps the badge.
+    expect(agentIdentity(named('codex', 'codex', reported('Codex CLI')))).toEqual({
+      name: 'codex',
+      badge: 'Codex CLI',
+      nameTitle: null,
+    });
+  });
+
+  test('an adapter that reports no title is badged and compared by its agentInfo.name', () => {
+    expect(agentIdentity(named('Codex', 'codex', reported(undefined, 'codex-acp')))).toEqual({
+      name: 'Codex',
+      badge: 'codex-acp',
+      nameTitle: null,
+    });
+    expect(agentIdentity(named('Codex-ACP', 'codex', reported(undefined, 'codex-acp')))).toEqual({
+      name: 'Codex-ACP',
+      badge: null,
+      nameTitle: '실행기: codex-acp',
+    });
   });
 });
 

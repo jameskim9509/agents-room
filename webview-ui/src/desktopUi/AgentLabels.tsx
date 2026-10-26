@@ -8,7 +8,7 @@ import {
 import type { OfficeState } from '../office/engine/officeState.js';
 import { overlayProjection } from '../office/projection.js';
 import { CharacterState } from '../office/types.js';
-import { harnessBadge } from './agentControls.js';
+import { agentIdentity } from './agentControls.js';
 import type { AgentView } from './agentView.js';
 import type { RuntimeWorld } from './runtimeWorld.js';
 import { AGENT_STATUS_LABELS } from './strings.js';
@@ -25,7 +25,8 @@ interface AgentLabelsProps {
 /**
  * Every agent's name label and harness badge, always shown above its character
  * so several agents read apart (ux.md 여러 에이전트 구분, SCRUM-28), with its
- * status. Re-renders every animation frame to follow the characters, like the
+ * status. The badge follows `agentIdentity`: left out when the name says it.
+ * Re-renders every animation frame to follow the characters, like the
  * inherited ToolOverlay; clicks pass through to the canvas.
  */
 export function AgentLabels({
@@ -65,6 +66,7 @@ export function AgentLabels({
         if (!ch) return null;
         const sittingOffset = ch.state === CharacterState.TYPE ? CHARACTER_SITTING_OFFSET_PX : 0;
         const selected = officeState.selectedAgentId === id;
+        const identity = agentIdentity(view);
         return (
           <div
             key={view.agent.agentId}
@@ -80,8 +82,12 @@ export function AgentLabels({
             data-testid="agent-label"
             data-agent-id={view.agent.agentId}
           >
-            <span className="text-text">{view.agent.name}</span>
-            <span className="text-text-muted">{harnessBadge(view)}</span>
+            <span className="text-text">{identity.name}</span>
+            {identity.badge !== null && (
+              <span className="text-text-muted" data-testid="agent-label-harness">
+                {identity.badge}
+              </span>
+            )}
             <span className="text-text-muted">· {AGENT_STATUS_LABELS[view.status]}</span>
           </div>
         );
