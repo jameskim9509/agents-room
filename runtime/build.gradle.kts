@@ -128,11 +128,15 @@ tasks.test {
     inputs.file(tasks.bootJar.flatMap { it.archiveFile })
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dagentsroom.runtime.bootJar=${jar.get()}") })
     // The contract tests read core/fixtures and validate frames against core/asyncapi.yaml with
-    // scripts/check-contract-fixtures.mjs (node), the validator of `npm run contract:check`.
+    // scripts/check-contract-fixtures.mjs (node), the validator of `npm run contract:check`. Its verdicts
+    // also depend on the locked ajv and @asyncapi/parser and on the node version CI installs (.nvmrc),
+    // so a bump of either reruns the tests instead of reusing a cached result.
     val root = repoRoot.asFile.absolutePath
     inputs.dir(repoRoot.dir("core/fixtures")).withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(repoRoot.file("core/asyncapi.yaml")).withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(repoRoot.file("scripts/check-contract-fixtures.mjs")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(repoRoot.file("package-lock.json")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(repoRoot.file(".nvmrc")).withPathSensitivity(PathSensitivity.RELATIVE)
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dagentsroom.repoRoot=$root") })
     testLogging {
         events("failed", "skipped")

@@ -85,6 +85,7 @@ Detail Panel은 위에서 아래로 다음 순서다.
 | `unsupported`         | 지원되지 않음                  | 시작 불가. 원인 표시 (SCRUM-25)               |
 | `executable_missing`  | 에이전트 실행기 설치/연결 필요 | 시작 불가. 설치 안내 (SCRUM-36)               |
 
+- `configured`는 정적 설정이 맞고 어댑터 설치가 있을 때만 온다. 어댑터 실행(SCRUM-23)이 붙기 전의 런타임은 어댑터를 띄우지 못하므로, 카탈로그가 실행하는 조합(Codex + ChatGPT 로그인)도 `executable_missing`으로 보낸다 (Sprint 0 중간값, [architecture.md](architecture.md#로컬-런타임-코드-구성)).
 - Jira 상태어 대응 (SCRUM-6, 11): Running = `running`, Waiting = `ready` 또는 `awaiting_permission`, Completed = `completed`, Failed = `failed` 또는 `error`.
 - 상태 색은 상속한 CSS 토큰을 쓴다: 실행 중 `--color-status-active`, 승인 대기 `--color-status-permission`, 완료 `--color-status-success`, 오류·실패 `--color-status-error`.
 

@@ -186,22 +186,26 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
   - 생성 코드는 별도 source set(`contract`)에서 컴파일한다. Modelina 출력에 불필요한 캐스트 같은 lint 경고가 있어서, 손으로 쓴 코드의 `-Xlint:all -Werror`를 풀지 않으려는 것이다.
   - 상속 프레임(`x-legacy`)은 바인딩에 없다. 그래서 런타임은 상속 프레임을 보내지 않고, 상속 명령은 모르는 명령처럼 거절한다.
 - 코덱(`ContractMessageCodec`)은 명령을 바인딩에 넣기 전에 JSON 트리에서 형식을 검사한다(`CommandShapes`). 검사 항목은 필수 필드, 타입(문자열, null을 허용하는 문자열, 객체), 정의되지 않은 필드, 중복 키, 뒤에 남은 내용이다. 생성된 클래스는 이 중 아무것도 강제하지 않고, 빠진 필드와 `null`도 구분하지 못한다.
-- 명령은 형식 → id → 구현 여부 순서로 확인한다.
-  - 형식이 틀리거나 모르는 명령이면 `INVALID_MESSAGE`, 모르는 `projectId`면 `UNKNOWN_PROJECT`, 모르는 `agentId`면 `UNKNOWN_AGENT`다.
-  - 아는 `projectId`는 최근 목록에 있는 프로젝트다(이번 실행 전용 id 포함). 아는 `agentId`는 현재 프로젝트의 에이전트다. `saveAgentConfig`가 둘 다 담으면 그 에이전트가 그 프로젝트의 것이어야 한다.
-  - `commandRejected`는 명령의 `type`과, 명령에 들어 있던 `agentId`·`projectId`·`permissionId`(`saveAgentConfig`는 `config` 안의 값)를 돌려준다. `message`는 마스킹 계층을 거치고, 필드 이름은 쓰지만 값은 옮기지 않는다.
-- 지금 처리하는 명령은 `openProject`뿐이다. 연결될 때마다 먼저 `snapshot`을 보낸다. 성공하면 모든 렌더러에 `projectOpened`와 `agentsUpdated`를 보내고, 실패하면 보낸 렌더러에만 `projectOpenFailed`를 보낸다. 계약의 다른 명령은 id를 확인한 뒤 `commandRejected`(`NOT_IMPLEMENTED`)로 답한다. 대기 중인 권한 요청이 아직 생기지 않으므로 `respondPermission`의 `permissionId`는 확인하지 않는다.
+  - 프레임은 두 번 읽는다. 먼저 트리를 만들지 않는 스트리밍 읽기로 JSON인지와 거절에 돌려줄 `type`과 id를 찾는다. 이 읽기에는 깊이·숫자 길이·이름 길이 제한이 없으므로(메모리는 1 MiB 프레임 제한이 묶는다) JSON인 프레임은 모두 `type`과 id를 돌려받는다. 같은 키가 두 번 나오면 `JSON.parse`처럼 마지막 값을 쓴다.
+  - 그다음 Jackson 기본 제한(깊이 500, 숫자 길이 1000, 이름 길이 50000)으로 트리를 읽는다. 제한을 넘으면 "Frame exceeds the runtime's JSON limits", 같은 키가 두 번 나오면 "'path' appears twice"처럼 그 키 이름으로 거절한다. "Frame is not JSON"은 `JSON.parse`도 받지 않는 프레임에만 쓴다.
+- 명령은 형식 → id → 구현 여부 순서로 확인한다 ([ADR 0005](adr/0005-agent-event-model.md) 결정 2).
+  - 형식이 틀리거나 모르는 명령이면 `INVALID_MESSAGE`, 모르는 `projectId`면 `UNKNOWN_PROJECT`, 모르는 `agentId`면 `UNKNOWN_AGENT`, 대기 중이 아닌 `permissionId`면 `UNKNOWN_PERMISSION`이다.
+  - 아는 `projectId`는 최근 목록에 있는 프로젝트다(이번 실행 전용 id 포함). 아는 `agentId`는 현재 프로젝트의 에이전트다. `saveAgentConfig`가 둘 다 담으면 그 에이전트가 그 프로젝트의 것이어야 한다. 에이전트가 아직 실행되지 않으므로 대기 중인 권한 요청은 없고, `respondPermission`은 늘 `UNKNOWN_PERMISSION`이다.
+  - `commandRejected`는 명령의 `type`과, 명령에 들어 있던 `agentId`·`projectId`·`permissionId`(`saveAgentConfig`는 `config` 안의 값)를 돌려준다. `message`는 마스킹 계층을 거치고, 필드 이름은 쓰지만 값은 옮기지 않는다. id는 자기 필드로만 돌아간다.
+- 지금 처리하는 명령은 `openProject`뿐이다. 연결될 때마다 먼저 `snapshot`을 보낸다. 성공하면 모든 렌더러에 `projectOpened`와 `agentsUpdated`를 보내고, 실패하면 보낸 렌더러에만 `projectOpenFailed`를 보낸다. 계약의 다른 명령은 id를 확인한 뒤 `commandRejected`(`NOT_IMPLEMENTED`)로 답한다.
 - `AgentSummary`의 `readiness`, `reportsToolDetails`, `reportsSubagentSessions`는 정적 실행기 카탈로그(`HarnessCatalog`)에서 온다 ([ux.md](ux.md#관찰한-것만-보여준다) R3, R4).
-  - `codex`는 `openai` + `chat-gpt`일 때 `configured`다. codex-acp는 Tool 호출에 kind와 status를 붙여 보내므로 `reportsToolDetails: true`다. agents-room이 `subagents` capability를 광고하지 않으면 서브에이전트도 일반 Tool 호출로 보내고 자식 세션을 알리지 않으므로 `reportsSubagentSessions: false`다 (Sprint 0 제안).
+  - 카탈로그는 `codex`를 `openai` + `chat-gpt`로 실행한다. codex-acp는 Tool 호출에 kind와 status를 붙여 보내므로 `reportsToolDetails: true`다. agents-room이 `subagents` capability를 광고하지 않으면 서브에이전트도 일반 Tool 호출로 보내고 자식 세션을 알리지 않으므로 `reportsSubagentSessions: false`다 (Sprint 0 제안).
   - 카탈로그에 없는 실행기나 조합(예: Codex + Bedrock, [ADR 0004](adr/0004-model-authentication.md)의 spike 전)은 `unsupported`다. 모르는 실행기는 두 값이 모두 `false`다.
-  - 어댑터 설치 확인(`executable_missing`)과 인증 상태(`auth_required`)는 어댑터 실행(SCRUM-23, 65)과 함께 붙인다.
+  - `configured`는 정적 설정이 맞고 어댑터 설치가 있을 때만 보낸다. 이 런타임은 아직 어댑터를 띄우지 못하므로, 카탈로그가 실행하는 조합도 지금은 `executable_missing`이다 (Sprint 0 중간값). 그래서 렌더러는 시작할 수 없는 에이전트에 "에이전트 시작"을 켜지 않는다.
+  - 어댑터 실행(SCRUM-23, 65)이 설치 확인(어댑터 경로와 절대 경로 `node`가 있으면 `configured`, 없으면 `executable_missing`)과 인증 상태(`auth_required`)를 붙인다.
 - 계약 테스트: 런타임이 만드는 모든 프레임과 WebSocket 대화로 받은 프레임을 `node scripts/check-contract-fixtures.mjs --verdicts <dir>`로 검사한다. `npm run contract:check`와 같은 ajv 설정이다. 그 밖에 다음을 확인한다.
   - 유효 fixture는 모두 코덱을 통과한다. 명령은 필드를 잃지 않고 바인딩되고, 서버 프레임은 fixture와 같은 JSON으로 다시 인코딩된다. 무효 명령 fixture는 모두 거절한다.
   - 형식 검사표의 명령과 필드는 생성된 클래스와 같다.
   - 유효 명령 fixture와 그 변형(필드 삭제, `null`, 다른 타입, 필드 추가)에서 코덱은 ajv와 같은 판정을 낸다.
   - Java JSON Schema 라이브러리를 쓰지 않는 이유는, 검사기가 둘이면 스키마(`if`/`then`/`else`, 타입 없는 `not`, AsyncAPI `discriminator`)를 서로 다르게 읽을 수 있어서다. node는 바인딩 생성 때문에 이미 필요하다.
 - 빌드와 테스트는 루트에서 `npm run runtime:build`(빌드, 테스트, `dev-runtime.json`)와 `npm run runtime:test`로 한다. `scripts/gradle.mjs`가 OS에 맞는 wrapper를 부른다. node가 PATH에 있어야 하고, 루트에서 먼저 `npm ci`(또는 `npm install`)를 해야 한다.
-- CI의 `runtime` job(ubuntu)이 같은 빌드를 돌린다. Windows 전용 테스트(job object, junction, 8.3 짧은 이름)는 Linux에서 건너뛰고, 지금은 Windows 개발 PC에서만 돈다.
+- CI의 `runtime` job이 같은 빌드를 Windows(windows-latest)와 Linux(ubuntu-latest)에서 돌린다. Windows 전용 테스트(job object, junction, 8.3 짧은 이름)는 Windows에서 돌고 Linux에서는 건너뛴다. 볼륨에서 8.3 이름이 꺼져 있거나 `mklink /J`가 실패하면 그 테스트만 건너뛴다.
+- Gradle 빌드 캐시가 켜져 있다. 그래서 테스트 작업은 계약 검사기의 결과를 바꿀 수 있는 파일(`core/fixtures`, `core/asyncapi.yaml`, `scripts/check-contract-fixtures.mjs`, `package-lock.json`, `.nvmrc`)을 입력으로 선언한다. 이 중 하나가 바뀌면 캐시된 결과를 쓰지 않고 다시 돈다.
 - job object는 FFM API로 kernel32를 부른다. 그래서 boot jar 매니페스트에 `Enable-Native-Access: ALL-UNNAMED`를 넣었다. 셸의 실행 명령은 그대로다.
 - Gradle을 띄우려면 JDK 17 이상이 `JAVA_HOME`이나 PATH에 있어야 한다. 빌드에 쓰는 JDK 25가 없으면 Gradle이 기본 `~/.gradle`(`~/.gradle/jdks`)에 내려받는다. Windows에서 `GRADLE_USER_HOME`을 깊은 경로로 바꾸면 압축을 풀 때 MAX_PATH(260자)를 넘어 실패한다.
 

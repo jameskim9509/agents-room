@@ -108,9 +108,11 @@ public final class RendererFrames {
     }
 
     /**
-     * An AgentConfig plus what the catalog says about its harness. Readiness is {@code configured} for
-     * a pair the catalog runs, otherwise {@code unsupported}; the adapter checks that can lower it come
-     * with the adapter launch (see {@link HarnessCatalog}).
+     * An AgentConfig plus what the catalog says about its harness. A pair the catalog does not run is
+     * {@code unsupported}. A pair it runs is {@code executable_missing} for now: this runtime cannot
+     * launch an adapter yet (SCRUM-23), and {@code configured} requires an adapter install it found
+     * (D9), so the renderer never offers to start an agent the runtime cannot start (ux.md). The
+     * adapter launch replaces this with the install check (see {@link HarnessCatalog}).
      */
     private static AgentSummary agentSummary(AgentConfig agent) {
         AgentSummary summary = new AgentSummary();
@@ -121,7 +123,7 @@ public final class RendererFrames {
         summary.setProviderId(agent.providerId());
         summary.setModelId(agent.modelId());
         summary.setAuthMethodId(agent.authMethodId());
-        summary.setReadiness(HarnessCatalog.supports(agent) ? Readiness.CONFIGURED : Readiness.UNSUPPORTED);
+        summary.setReadiness(HarnessCatalog.supports(agent) ? Readiness.EXECUTABLE_MISSING : Readiness.UNSUPPORTED);
         summary.setPalette(agent.palette());
         summary.setHueShift(agent.hueShift());
         summary.setReportsToolDetails(HarnessCatalog.reportsToolDetails(agent));

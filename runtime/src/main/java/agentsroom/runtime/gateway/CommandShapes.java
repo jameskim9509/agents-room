@@ -117,6 +117,11 @@ final class CommandShapes {
         return Optional.empty();
     }
 
+    /** A renderer-supplied field name as a message quotes it: in quotes, cut at a fixed length. */
+    static String quote(String name) {
+        return quote("", name);
+    }
+
     private static String quote(String prefix, String name) {
         String quoted = prefix + name;
         if (quoted.length() > MAX_QUOTED_NAME_LENGTH) {

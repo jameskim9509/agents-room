@@ -142,10 +142,17 @@ class ContractMessageCodecTests {
         String path = "\"path\":\"C:\\\\work\"";
 
         assertThatThrownBy(() -> codec.decode("{\"type\":\"openProject\"," + path + "," + path + "}"))
-                .as("a duplicate key").isInstanceOf(MalformedFrameException.class);
+                .as("a duplicate key").hasMessage("'path' appears twice");
+        assertThatThrownBy(() -> codec.decode("{\"type\":\"saveAgentConfig\",\"config\":{\"name\":\"a\",\"name\":\"b\"}}"))
+                .as("a duplicate key in config").hasMessage("'name' appears twice");
         assertThatThrownBy(() -> codec.decode("{\"type\":\"openProject\"," + path + "} {}"))
-                .as("trailing content").isInstanceOf(MalformedFrameException.class);
-        assertThatThrownBy(() -> codec.decode("")).as("an empty frame").isInstanceOf(MalformedFrameException.class);
+                .as("trailing content").hasMessage("Frame is not JSON");
+        assertThatThrownBy(() -> codec.decode("{\"type\":\"openProject\"," + path + "} x"))
+                .as("trailing junk").hasMessage("Frame is not JSON");
+        assertThatThrownBy(() -> codec.decode("")).as("an empty frame").hasMessage("Frame is not JSON");
+        assertThatThrownBy(() -> codec.decode("[1]")).hasMessage("Frame is not a JSON object");
+        assertThatThrownBy(() -> codec.decode("[1")).hasMessage("Frame is not JSON");
+        assertThatThrownBy(() -> codec.decode("{\"type\":\"startAgent\",\"agentId\":\"a\"")).hasMessage("Frame is not JSON");
     }
 
     @Test
@@ -157,7 +164,38 @@ class ContractMessageCodecTests {
                 .isEqualTo(CommandEcho.permission("respondPermission", "p1"));
         assertThat(echoOf("{\"type\":\"saveAgentConfig\",\"config\":{\"agentId\":\"a1\",\"projectId\":\"p1\"}}"))
                 .isEqualTo(new CommandEcho("saveAgentConfig", "a1", "p1", null));
+        assertThat(echoOf("{\"type\":\"saveAgentConfig\",\"agentId\":7,\"config\":{\"agentId\":\"a1\"}}"))
+                .as("a top-level id that is no string leaves config's").isEqualTo(CommandEcho.agent("saveAgentConfig", "a1"));
         assertThat(echoOf("{\"type\":\"bogus\",\"agentId\":7}")).isEqualTo(CommandEcho.of("bogus"));
+        assertThatThrownBy(() -> codec.decode("{\"type\":\"unknown\"}")).as("a frame typed 'unknown'")
+                .hasMessage("Not an agents-room command");
+    }
+
+    /** JSON.parse reads these frames, so their rejection echoes like any other, whatever Jackson's limits. */
+    @Test
+    void aWellFormedFrameKeepsItsEchoWhenItRepeatsAKeyOrExceedsTheParserLimits() {
+        // JSON.parse keeps the last of two equal keys.
+        assertThat(echoOf("{\"type\":\"openProject\",\"path\":\"C:\\\\x\",\"path\":\"C:\\\\y\"}"))
+                .isEqualTo(CommandEcho.of("openProject"));
+        assertThat(echoOf("{\"type\":\"bogus\",\"agentId\":\"a1\",\"type\":\"startAgent\",\"agentId\":\"a2\"}"))
+                .isEqualTo(CommandEcho.agent("startAgent", "a2"));
+        assertThat(echoOf("{\"type\":\"stopAgent\",\"agentId\":\"a1\",\"agentId\":7}"))
+                .isEqualTo(CommandEcho.of("stopAgent"));
+        assertThat(echoOf("{\"type\":\"saveAgentConfig\",\"config\":{\"projectId\":\"p1\"},\"config\":{\"agentId\":\"a1\"}}"))
+                .isEqualTo(CommandEcho.agent("saveAgentConfig", "a1"));
+
+        String deep = "[".repeat(2000) + "]".repeat(2000);
+        String limits = "Frame exceeds the runtime's JSON limits (nesting depth 500, number length 1000, name length 50000)";
+        assertThatThrownBy(() -> codec.decode("{\"type\":\"startAgent\",\"agentId\":\"a\",\"x\":" + deep + "}"))
+                .hasMessage(limits);
+        assertThat(echoOf("{\"type\":\"startAgent\",\"agentId\":\"a\",\"x\":" + deep + "}"))
+                .isEqualTo(CommandEcho.agent("startAgent", "a"));
+        assertThat(echoOf("{\"x\":" + deep + ",\"type\":\"startAgent\",\"agentId\":\"a\"}"))
+                .as("ids after the deep part").isEqualTo(CommandEcho.agent("startAgent", "a"));
+        assertThat(echoOf("{\"type\":\"sendPrompt\",\"n\":" + "1".repeat(1001) + ",\"agentId\":\"a\",\"text\":\"\"}"))
+                .isEqualTo(CommandEcho.agent("sendPrompt", "a"));
+        assertThat(echoOf("{\"type\":\"cancelRun\",\"" + "k".repeat(50_001) + "\":1,\"agentId\":\"a\",\"runId\":\"r\"}"))
+                .isEqualTo(CommandEcho.agent("cancelRun", "a"));
     }
 
     @Test

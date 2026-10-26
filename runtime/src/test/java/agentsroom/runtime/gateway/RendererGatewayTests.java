@@ -168,7 +168,7 @@ class RendererGatewayTests {
         assertThat(agent.get("harnessId").asString()).isEqualTo("codex");
         assertThat(agent.get("projectId").asString()).isEqualTo(project.get("projectId").asString());
         assertThat(agent.get("modelId").isNull()).isTrue();
-        assertThat(agent.get("readiness").asString()).isEqualTo("configured");
+        assertThat(agent.get("readiness").asString()).as("no adapter launch yet").isEqualTo("executable_missing");
         assertThat(agent.get("reportsToolDetails").asBoolean()).isTrue();
         assertThat(agent.get("reportsSubagentSessions").asBoolean()).isFalse();
 
@@ -205,19 +205,25 @@ class RendererGatewayTests {
                 "{\"type\":\"webviewReady\"}",
                 "{\"type\":\"startAgent\",\"agentId\":\"a\"}",
                 "{\"type\":\"openProject\"}",
-                "{\"type\":\"openProject\",\"path\":\"C:\\\\x\",\"force\":true}");
+                "{\"type\":\"openProject\",\"path\":\"C:\\\\x\",\"force\":true}",
+                "{\"type\":\"openProject\",\"path\":\"C:\\\\x\",\"path\":\"C:\\\\y\"}",
+                "{\"type\":\"startAgent\",\"agentId\":\"a\",\"x\":" + "[".repeat(1001) + "]".repeat(1001) + "}");
 
-        List<JsonNode> frames = converse(origin(APP_ORIGIN), badFrames, 7);
+        List<JsonNode> frames = converse(origin(APP_ORIGIN), badFrames, 9);
 
-        List<JsonNode> replies = frames.subList(1, 7);
+        List<JsonNode> replies = frames.subList(1, 9);
         assertThat(replies).allSatisfy(frame -> assertThat(frame.get("type").asString())
                 .isEqualTo("commandRejected"));
         assertThat(replies).extracting(frame -> frame.get("command").asString())
-                .containsExactly("unknown", "bogus", "webviewReady", "startAgent", "openProject", "openProject");
+                .containsExactly("unknown", "bogus", "webviewReady", "startAgent", "openProject", "openProject",
+                        "openProject", "startAgent");
         assertThat(replies).extracting(frame -> frame.get("reason").asString())
                 .containsExactly("INVALID_MESSAGE", "INVALID_MESSAGE", "INVALID_MESSAGE", "UNKNOWN_AGENT",
-                        "INVALID_MESSAGE", "INVALID_MESSAGE");
+                        "INVALID_MESSAGE", "INVALID_MESSAGE", "INVALID_MESSAGE", "INVALID_MESSAGE");
         assertThat(replies.get(3).get("agentId").asString()).isEqualTo("a");
+        assertThat(replies.get(6).get("message").asString()).isEqualTo("'path' appears twice");
+        assertThat(replies.get(7).get("message").asString()).startsWith("Frame exceeds the runtime's JSON limits");
+        assertThat(replies.get(7).get("agentId").asString()).isEqualTo("a");
     }
 
     /**
@@ -245,8 +251,9 @@ class RendererGatewayTests {
                         null),
                 new Case(command("cancelRun", "agentId", agentId, "runId", unknown), "NOT_IMPLEMENTED", agentId, null,
                         null),
+                // Nothing runs, so no permission request is pending.
                 new Case(command("respondPermission", "permissionId", unknown, "optionId", "approved"),
-                        "NOT_IMPLEMENTED", null, null, unknown),
+                        "UNKNOWN_PERMISSION", null, null, unknown),
                 new Case(command("relocateProject", "projectId", projectId, "path", path), "NOT_IMPLEMENTED", null,
                         projectId, null),
                 new Case(saveAgentConfig(projectId, null), "NOT_IMPLEMENTED", null, projectId, null),
@@ -271,6 +278,9 @@ class RendererGatewayTests {
             assertThat(text(reply, "projectId")).as("projectId of %s", expected.command())
                     .isEqualTo(expected.projectId());
             assertThat(text(reply, "permissionId")).isEqualTo(expected.permissionId());
+            // The ids go back in their own fields, never in the message.
+            assertThat(reply.get("message").asString()).as("message of %s", expected.command())
+                    .doesNotContain(agentId, projectId, unknown, path);
         }
         renderer.close();
 

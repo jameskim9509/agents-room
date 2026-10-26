@@ -9,9 +9,10 @@ import java.util.Set;
  * knows, the provider and auth method pairs each runs with, and what each reports (ux.md R3, R4).
  * Nothing here is learned by watching a run.
  *
- * <p>The adapter install check ({@code executable_missing}) and the adapter's auth status
- * ({@code auth_required}) come with the adapter launch (SCRUM-23, 65); until then readiness rests on
- * this catalog alone.
+ * <p>The catalog only says whether a pair can run at all. The adapter install check, which makes a
+ * supported pair {@code configured} or {@code executable_missing} (D9), and the adapter's auth status
+ * ({@code auth_required}) come with the adapter launch (SCRUM-23, 65). Until then this runtime can
+ * launch nothing, so a supported pair is reported {@code executable_missing}.
  */
 public final class HarnessCatalog {
 

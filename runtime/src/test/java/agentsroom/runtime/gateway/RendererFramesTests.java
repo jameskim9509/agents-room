@@ -60,9 +60,9 @@ class RendererFramesTests {
         frames.add(RendererFrames.commandRejected(CommandEcho.of(CommandEcho.UNKNOWN_COMMAND),
                 RejectReason.INVALID_MESSAGE, "Frame is not JSON"));
         frames.add(RendererFrames.commandRejected(new CommandEcho("saveAgentConfig", "a1", "p1", null),
-                RejectReason.UNKNOWN_AGENT, "No agent a1 in the current project"));
+                RejectReason.UNKNOWN_AGENT, "No such agent in the current project"));
         frames.add(RendererFrames.commandRejected(CommandEcho.permission("respondPermission", "p1"),
-                RejectReason.NOT_IMPLEMENTED, "Not yet"));
+                RejectReason.UNKNOWN_PERMISSION, "No such pending permission request"));
         List<String> texts = frames.stream().map(codec::encode).toList();
 
         List<Verdict> verdicts = ContractSchema.validateServerMessages(texts);
@@ -76,7 +76,8 @@ class RendererFramesTests {
     @Test
     void readinessAndReportsComeFromTheHarnessCatalog() {
         AgentSummary codex = summary(AgentConfig.seededCodex(PROJECT_ID));
-        assertThat(codex.getReadiness()).isEqualTo(Readiness.CONFIGURED);
+        // configured needs an adapter install the runtime found (D9), and it cannot launch one yet.
+        assertThat(codex.getReadiness()).as("no adapter launch yet").isEqualTo(Readiness.EXECUTABLE_MISSING);
         assertThat(codex.getReportsToolDetails()).as("D21").isTrue();
         assertThat(codex.getReportsSubagentSessions()).as("D22").isFalse();
 
@@ -96,9 +97,10 @@ class RendererFramesTests {
         assertThat(snapshot).isEqualTo("{\"type\":\"snapshot\",\"currentProjectId\":null,\"recentProjects\":[],\"agents\":[]}");
 
         String rejected = codec.encode(RendererFrames.commandRejected(CommandEcho.agent("stopAgent", "a1"),
-                RejectReason.UNKNOWN_AGENT, "No agent a1"));
+                RejectReason.UNKNOWN_AGENT, "No such agent in the current project"));
         assertThat(rejected).isEqualTo("{\"type\":\"commandRejected\",\"command\":\"stopAgent\","
-                + "\"reason\":\"UNKNOWN_AGENT\",\"message\":\"No agent a1\",\"agentId\":\"a1\"}");
+                + "\"reason\":\"UNKNOWN_AGENT\",\"message\":\"No such agent in the current project\","
+                + "\"agentId\":\"a1\"}");
     }
 
     @Test

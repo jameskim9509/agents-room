@@ -6,7 +6,8 @@
 # The inherited e2e suite now runs only locally (npm run e2e). The Windows
 # desktop e2e job arrives with the desktop shell PR; macOS and Linux come with
 # SCRUM-64 (docs/adr/0001-desktop-framework.md, decision 7). The runtime job
-# builds and tests the Java/Spring local runtime (runtime/) on Linux.
+# builds and tests the Java/Spring local runtime (runtime/) on Windows and
+# Linux.
 
 name: CI
 
@@ -253,12 +254,18 @@ jobs:
   # bindings of core/asyncapi.yaml with node (ADR 0005 decision 11), and the
   # contract tests validate the runtime's frames with
   # scripts/check-contract-fixtures.mjs, so the job needs npm ci as well as
-  # JDK 25. Linux is enough here: the Windows-only tests (job object, junctions,
-  # 8.3 short names) skip themselves and still run on the Windows dev PCs.
+  # JDK 25. Windows is the MVP platform (ADR 0002) and the only one where the
+  # Windows-only tests (job object, junctions, 8.3 short names) run; on Linux
+  # they skip themselves. fail-fast is off so that one OS failing still
+  # reports the other.
   runtime:
-    name: Runtime
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: Runtime (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
 
     steps:
       - name: Checkout
@@ -292,7 +299,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: runtime-test-reports
+          name: runtime-test-reports-${{ matrix.os }}
           path: runtime/build/reports/tests/test/
           retention-days: 7
 
