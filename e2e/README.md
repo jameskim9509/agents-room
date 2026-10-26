@@ -40,7 +40,11 @@ The built shell against the real local runtime: the boot jar `runtime/build/dev-
 
 ### Desktop shell running an agent over ACP (`@area:desktop-agent`)
 
-The built shell against the real runtime jar, whose seeded Codex agent runs as the mock ACP agent (`AGENTS_ROOM_HARNESS_CODEX_COMMAND`, `AGENTS_ROOM_E2E=1`) on the shell's own Electron as Node (`AGENTS_ROOM_NODE`, `ELECTRON_RUN_AS_NODE`), as codex-acp would. The project and agent panels do not exist yet, so commands go out on the renderer's runtime socket through the `sendRuntimeCommand` test hook and the assertions read the renderer's runtime state (`getRuntimeState`). Covers: a project opened through the stubbed folder picker gets the seeded Codex agent (`configured`); one prompt streams its events to the renderer in receive order (`seq` 1..N without gaps; status `starting` → `ready` → `running` → `ready`; start stages without sign-in for a logged-in adapter; `authStatus` without the account email; `runStarted`, a tool call merged by its id, the answer chunks and `runEnded {completed}`, all with the run's `runId` and the session's `sessionId`); the adapter ran on Electron's Node in the project folder, which `session/new` got as its `cwd`; stopping ends the session as `stopped` and the adapter process; an adapter that crashes mid-run fails the run (`PROCESS_EXITED`, never `completed`), ends the session as `exited`, puts the agent in `error` (also in a reconnecting renderer's snapshot), and a new start opens a new session; quitting leaves no java or mock process. Same build needs as `@area:desktop-runtime`.
+The built shell against the real runtime jar, whose seeded Codex agent runs as the mock ACP agent (`AGENTS_ROOM_HARNESS_CODEX_COMMAND`, `AGENTS_ROOM_E2E=1`) on the shell's own Electron as Node (`AGENTS_ROOM_NODE`, `ELECTRON_RUN_AS_NODE`), as codex-acp would. These specs check the runtime's frames themselves, so commands go out on the renderer's runtime socket through the `sendRuntimeCommand` test hook and the assertions read the renderer's runtime state (`getRuntimeState`); the panels that show those frames are `@area:desktop-ui`. Covers: a project opened through the stubbed folder picker gets the seeded Codex agent (`configured`); one prompt streams its events to the renderer in receive order (`seq` 1..N without gaps; status `starting` → `ready` → `running` → `ready`; start stages without sign-in for a logged-in adapter; `authStatus` without the account email; `runStarted`, a tool call merged by its id, the answer chunks and `runEnded {completed}`, all with the run's `runId` and the session's `sessionId`); the adapter ran on Electron's Node in the project folder, which `session/new` got as its `cwd`; stopping ends the session as `stopped` and the adapter process; an adapter that crashes mid-run fails the run (`PROCESS_EXITED`, never `completed`), ends the session as `exited`, puts the agent in `error` (also in a reconnecting renderer's snapshot), and a new start opens a new session; quitting leaves no java or mock process. Same build needs as `@area:desktop-runtime`.
+
+### Desktop panels and pixel world (`@area:desktop-ui`)
+
+The desktop screens (`webview-ui/src/desktopUi/`) on the built shell, the real runtime jar and the mock ACP agent, driven through the DOM like a user: the project panel, the agent cards, the Detail Panel and real mouse clicks on the office canvas. Covers: the start screen shows the pixel world, "프로젝트 열기" and the agent panel together; a cancelled folder picker changes nothing; a missing folder and a file show their `ProjectErrorCode` copy with "다른 폴더를 선택하세요" and can be picked again; a good folder shows its name, real path and depth-2 tree (`node_modules` not entered, a cut tree marked) and its seeded Codex agent as an offline, seated, translucent character opened in the Detail Panel, whose "연결 확인" shows the check result on its card; a project seeded in the runtime's data dir (`beforeLaunch`) opens from "최근 프로젝트" with a second agent whose harness the catalog does not know (`지원되지 않음`, the R3 text); a character click and a card click select the same agent; a run shows its request, "세션 상태", "현재 Tool" per tool kind with the character's tool and icon (reading, search magnifier, typing, terminal, generic cog), events in receive order, the final response with the `cwd` the adapter got, and no sub-agent or duplicate character after a sub-agent-looking tool call, a raw `subagent_spawned` and 20 repeated updates, counted on the engine's own characters (`getCharacters`: exactly the two agents' ids, none negative; R4 text shown); a permission request is answered with its kind-labelled buttons while a click that provably lands on the character (it deselects it) keeps its "..." bubble, and no Plan section appears when none was reported; a run that streams about 550 events (300 messages, then one message in 250 chunks) still reads mid-run as running with its session, request, current tool and character, keeps at most 200 event rows, refuses opening another folder (`INVALID_STATE`, the open project stays), and ends with the whole answer from its first message; during a long run the window resizes (world column and canvas follow) and a click on the working character selects it; an adapter crash shows the error with its stage, cause and action, never "완료", the harness badge keeps the adapter's name, and the agent starts again without the crashed run as its current one (R8); the sign-in stage shows "브라우저에서 ChatGPT 로그인을 완료하세요" and "에이전트 종료" ends it; a failed sign-in (`auth-fails`) reads "인증 실패" at "인증 확인" with the sign-in action, apart from a failed session (`session-new-fails`: "세션 생성 실패" at "세션 생성", the generic action and a masked cause). Characters live only on the canvas, so their behaviour is read through the `getRuntimeAgents`/`getCharacters` test hooks, and `getCharacterClientPoint` gives the point to click. Same build needs as `@area:desktop-runtime`.
 
 ### Pet system (`@area:pets`)
 
@@ -190,7 +194,7 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 
 <!-- BEGIN:E2E-INVENTORY -->
 
-106 tests total. Generated by `scripts/generate-e2e-inventory.mjs`. Re-run after adding or removing tests.
+114 tests total. Generated by `scripts/generate-e2e-inventory.mjs`. Re-run after adding or removing tests.
 
 ### `@area:spawn` (2 tests)
 
@@ -306,8 +310,8 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 
 ### `@area:desktop-agent` (2 tests)
 
-- `e2e/desktop/agentRun.spec.ts:192` — a prompt to the seeded Codex agent streams its events in order to the renderer, and stopping and quitting leave no process (Desktop shell running an agent over ACP)
-- `e2e/desktop/agentRun.spec.ts:298` — an adapter that crashes mid-run puts the agent in error, never completed, and a new start works (Desktop shell running an agent over ACP)
+- `e2e/desktop/agentRun.spec.ts:193` — a prompt to the seeded Codex agent streams its events in order to the renderer, and stopping and quitting leave no process (Desktop shell running an agent over ACP)
+- `e2e/desktop/agentRun.spec.ts:299` — an adapter that crashes mid-run puts the agent in error, never completed, and a new start works (Desktop shell running an agent over ACP)
 
 ### `@area:desktop-runtime` (2 tests)
 
@@ -327,6 +331,17 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 - `e2e/desktop/shell.spec.ts:153` — a runtime that refuses the handshake leaves the office up and the renderer reconnecting (Desktop shell)
 - `e2e/desktop/shell.spec.ts:162` — cancelling the folder picker returns null and leaves the screen as it was (Desktop shell)
 - `e2e/desktop/shell.spec.ts:203` — the renderer cannot open windows or navigate away from app://bundle (Desktop shell)
+
+### `@area:desktop-ui` (8 tests)
+
+- `e2e/desktop/panels.spec.ts:304` — the start screen opens a project through the folder picker: cancel keeps it, a bad folder shows why, a good one shows name, path and tree (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:410` — a run shows its request, session state, current tool by kind, events in order and the final response, and the character follows it (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:520` — a permission request is answered with the buttons of its options, and a click on the character keeps it (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:570` — a run that streams more events than the lists hold keeps its state, the whole answer and the open project (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:632` — a sign-in that fails reads as an authentication failure at the sign-in stage, apart from a run failure (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:658` — a session that cannot be created reads as such, with the stage and the generic action (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:680` — during a long run the window resizes and a character click selects it; an adapter crash shows the error and the app keeps working (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:774` — the sign-in stage asks for the browser login, and "에이전트 종료" ends it (Desktop panels and pixel world)
 
 ### `@area:pets` (3 tests)
 

@@ -94,6 +94,12 @@ export interface LaunchDesktopOptions {
    * shell's own executable, so the runtime runs it as Node, as it would codex-acp.
    */
   mockAgent?: MockAgentScenario;
+  /**
+   * Runs before the app starts, with the launch's fresh directories: lets a
+   * spec seed what a previous session would have left, such as the runtime's
+   * data dir (`<userDataDir>/runtime`, architecture.md Persistence).
+   */
+  beforeLaunch?: (dirs: { tmpBase: string; userDataDir: string }) => void;
 }
 
 export interface DesktopSession {
@@ -352,6 +358,8 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
     fs.writeFileSync(mockAgentScenarioFile, JSON.stringify(opts.mockAgent));
   }
 
+  opts.beforeLaunch?.({ tmpBase, userDataDir });
+
   const env = isolatedEnv(
     tmpHome,
     userDataDir,
@@ -591,4 +599,114 @@ export function webSocketHandshakeStatus(
     request.on('error', reject);
     request.end();
   });
+}
+
+// ── The desktop panels (desktopUi/): folder picker, characters ───────────────
+
+interface FolderPickerStubGlobals {
+  __folderPickerCalls: number;
+}
+
+/**
+ * Replaces `dialog.showOpenDialog` in the main process: the next pick returns
+ * `folder`, or a cancel when it is `null`. Counts the calls, so a spec knows
+ * the click reached the picker before it asserts that nothing changed.
+ */
+export async function stubFolderPicker(
+  app: ElectronApplication,
+  folder: string | null,
+): Promise<void> {
+  await app.evaluate(({ dialog }, picked) => {
+    const g = globalThis as unknown as FolderPickerStubGlobals;
+    g.__folderPickerCalls ??= 0;
+    dialog.showOpenDialog = (async () => {
+      g.__folderPickerCalls++;
+      return picked === null
+        ? { canceled: true, filePaths: [] }
+        : { canceled: false, filePaths: [picked] };
+    }) as typeof dialog.showOpenDialog;
+  }, folder);
+}
+
+/** How many times the stubbed folder picker answered. */
+export function folderPickerCalls(app: ElectronApplication): Promise<number> {
+  return app.evaluate(
+    () => (globalThis as unknown as FolderPickerStubGlobals).__folderPickerCalls ?? 0,
+  );
+}
+
+/** One runtime agent's character as the world drives it (`getRuntimeAgents` test hook). */
+export interface RuntimeCharacter {
+  agentId: string;
+  characterId: number;
+  behaviour: { pose: string; tool: string | null; icon: string | null; bubble: string | null };
+  engineUpdates: number;
+}
+
+/** One character as the engine holds it (`getCharacters` test hook). */
+export interface EngineCharacter {
+  id: number;
+  bubbleType: string | null;
+  state: string;
+  isActive: boolean;
+  currentTool: string | null;
+  isRuntimeAgent?: boolean;
+  pinnedToSeat?: boolean;
+  isOffline?: boolean;
+  activityIcon?: string | null;
+}
+
+interface PanelTestHooks {
+  getRuntimeAgents?: () => RuntimeCharacter[];
+  getCharacters?: () => EngineCharacter[];
+  getSelectedRuntimeAgent?: () => string | null;
+  getCharacterClientPoint?: (agentId: string) => { x: number; y: number } | null;
+}
+
+type PanelWindow = Window & { __pixelAgentsTestHooks?: PanelTestHooks };
+
+/** The runtime agents the world shows, with their characters' behaviour. */
+export function runtimeCharacters(page: Page): Promise<RuntimeCharacter[]> {
+  return page.evaluate(
+    () => (window as PanelWindow).__pixelAgentsTestHooks?.getRuntimeAgents?.() ?? [],
+  );
+}
+
+/**
+ * Every character the engine holds, whoever made it (`getCharacters` test
+ * hook): a sub-agent character or a duplicate would show here, not in
+ * `runtimeCharacters`, which lists one row per runtime agent by construction.
+ */
+export function engineCharacters(page: Page): Promise<EngineCharacter[]> {
+  return page.evaluate(
+    () => (window as PanelWindow).__pixelAgentsTestHooks?.getCharacters?.() ?? [],
+  );
+}
+
+/** The engine's character for a runtime agent, or null. */
+export async function engineCharacter(
+  page: Page,
+  agentId: string,
+): Promise<EngineCharacter | null> {
+  const runtime = (await runtimeCharacters(page)).find((row) => row.agentId === agentId);
+  if (!runtime) return null;
+  const characters = await engineCharacters(page);
+  return characters.find((ch) => ch.id === runtime.characterId) ?? null;
+}
+
+/** The agent the engine has selected (the one the Detail Panel shows), or null. */
+export function selectedRuntimeAgent(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () => (window as PanelWindow).__pixelAgentsTestHooks?.getSelectedRuntimeAgent?.() ?? null,
+  );
+}
+
+/** Clicks an agent's character on the office canvas with the real mouse. */
+export async function clickCharacter(page: Page, agentId: string): Promise<void> {
+  const point = await page.evaluate(
+    (id) => (window as PanelWindow).__pixelAgentsTestHooks?.getCharacterClientPoint?.(id) ?? null,
+    agentId,
+  );
+  expect(point, `agent ${agentId} has a character on screen`).not.toBeNull();
+  await page.mouse.click(point!.x, point!.y);
 }

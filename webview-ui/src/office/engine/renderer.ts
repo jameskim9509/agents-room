@@ -33,6 +33,7 @@ import {
   GRID_LINE_COLOR,
   HEADLESS_CHARACTER_ALPHA,
   HOVERED_OUTLINE_ALPHA,
+  OFFLINE_CHARACTER_ALPHA,
   OUTLINE_Z_SORT_OFFSET,
   ROTATE_BUTTON_BG,
   SEAT_AVAILABLE_COLOR,
@@ -54,15 +55,23 @@ import {
 import { getPetSprites } from '../sprites/petSpriteData.js';
 import { getCachedSprite, getOutlineSprite } from '../sprites/spriteCache.js';
 import {
+  BUBBLE_CANCELLED_SPRITE,
+  BUBBLE_ERROR_SPRITE,
   BUBBLE_HEART_SPRITE,
   BUBBLE_PERMISSION_SPRITE,
   BUBBLE_WAITING_SPRITE,
+  BUBBLE_WARNING_SPRITE,
   getCharacterSprites,
+  ICON_GENERIC_SPRITE,
+  ICON_SEARCH_SPRITE,
+  ICON_TERMINAL_SPRITE,
 } from '../sprites/spriteData.js';
 import type {
+  ActivityIcon,
   AreaDefinition,
   CarpetTile,
   Character,
+  CharacterBubble,
   FurnitureInstance,
   Pet,
   Seat,
@@ -404,8 +413,13 @@ export function renderScene(
     const charZY = ch.y + TILE_SIZE / 2 + CHARACTER_Z_SORT_OFFSET;
 
     // Headless agents (adopted, no terminal to focus) render translucent while
-    // the "Display headless as ghosts" setting is on.
-    const alpha = ch.isHeadless && ghostHeadlessAgents ? HEADLESS_CHARACTER_ALPHA : 1;
+    // the "Display headless as ghosts" setting is on. An agents-room agent with
+    // no process (`offline`) always does (ux.md 상태 어휘).
+    const alpha = ch.isOffline
+      ? OFFLINE_CHARACTER_ALPHA
+      : ch.isHeadless && ghostHeadlessAgents
+        ? HEADLESS_CHARACTER_ALPHA
+        : 1;
 
     // Matrix spawn/despawn effect — skip outline, use per-pixel rendering
     if (ch.matrixEffect) {
@@ -765,6 +779,21 @@ function renderRotateButton(
 
 // ── Speech bubbles ──────────────────────────────────────────────
 
+const BUBBLE_SPRITES: Record<CharacterBubble, SpriteData> = {
+  permission: BUBBLE_PERMISSION_SPRITE,
+  waiting: BUBBLE_WAITING_SPRITE,
+  error: BUBBLE_ERROR_SPRITE,
+  cancelled: BUBBLE_CANCELLED_SPRITE,
+  warning: BUBBLE_WARNING_SPRITE,
+};
+
+/** agents-room desktop: tool-kind icons, drawn in the bubble's place while no bubble shows. */
+const ACTIVITY_ICON_SPRITES: Record<ActivityIcon, SpriteData> = {
+  search: ICON_SEARCH_SPRITE,
+  terminal: ICON_TERMINAL_SPRITE,
+  generic: ICON_GENERIC_SPRITE,
+};
+
 function renderBubbles(
   ctx: CanvasRenderingContext2D,
   characters: Character[],
@@ -773,18 +802,27 @@ function renderBubbles(
   zoom: number,
 ): void {
   for (const ch of characters) {
-    if (!ch.bubbleType) continue;
     // The green checkmark bubble only represents "done" (turn finished). The
     // idle "Waiting for input" state communicates via its overlay label, not a
     // bubble, so skip the bubble for it.
     if (ch.bubbleType === 'waiting' && ch.waitingAwaitingInput) continue;
+    // No bubble: an agents-room character may show its tool-kind icon instead.
+    const sprite = ch.bubbleType
+      ? BUBBLE_SPRITES[ch.bubbleType]
+      : ch.activityIcon
+        ? ACTIVITY_ICON_SPRITES[ch.activityIcon]
+        : null;
+    if (!sprite) continue;
 
-    const sprite =
-      ch.bubbleType === 'permission' ? BUBBLE_PERMISSION_SPRITE : BUBBLE_WAITING_SPRITE;
-
-    // Compute opacity: permission = full, waiting = fade in last 0.5s
+    // Compute opacity: permission and lasting bubbles = full, timed ones
+    // (waiting, run outcomes) fade in the last 0.5s
     let alpha = 1.0;
-    if (ch.bubbleType === 'waiting' && ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC) {
+    if (
+      ch.bubbleType &&
+      ch.bubbleType !== 'permission' &&
+      ch.bubbleTimer > 0 &&
+      ch.bubbleTimer < BUBBLE_FADE_DURATION_SEC
+    ) {
       alpha = ch.bubbleTimer / BUBBLE_FADE_DURATION_SEC;
     }
 

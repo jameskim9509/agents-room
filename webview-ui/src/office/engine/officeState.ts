@@ -28,7 +28,9 @@ import { findPath, getWalkableTiles, isWalkable } from '../layout/tileMap.js';
 import { getPetCount, getPetName } from '../sprites/petSpriteData.js';
 import { getLoadedCharacterCount } from '../sprites/spriteData.js';
 import type {
+  ActivityIcon,
   Character,
+  CharacterBubble,
   FurnitureInstance,
   OfficeLayout,
   Pet,
@@ -903,16 +905,60 @@ export class OfficeState {
     }
   }
 
-  /** Dismiss bubble on click — permission: instant, waiting: quick fade */
+  /** Dismiss bubble on click — permission: instant, waiting: quick fade.
+   *  A runtime agent's permission bubble and lasting error bubble stay: only the
+   *  runtime's answer clears them (agents-room R9). */
   dismissBubble(id: number): void {
     const ch = this.characters.get(id);
     if (!ch || !ch.bubbleType) return;
-    if (ch.bubbleType === 'permission') {
+    if (ch.bubbleType === 'permission' || (ch.bubbleType === 'error' && ch.bubbleTimer <= 0)) {
+      if (ch.isRuntimeAgent) return;
       ch.bubbleType = null;
       ch.bubbleTimer = 0;
-    } else if (ch.bubbleType === 'waiting') {
-      // Trigger immediate fade (0.3s remaining)
+    } else {
+      // Timed bubbles (waiting, and the desktop's run-outcome bubbles): immediate fade (0.3s remaining)
       ch.bubbleTimer = Math.min(ch.bubbleTimer, DISMISS_BUBBLE_FAST_FADE_SEC);
+    }
+  }
+
+  // ── agents-room desktop: runtime agents (desktopUi/runtimeWorld.ts) ──
+
+  /** Keep the character at its seat, holding its pose (ux.md 상태 어휘). */
+  setAgentPinned(id: number, pinned: boolean): void {
+    const ch = this.characters.get(id);
+    if (ch) ch.pinnedToSeat = pinned;
+  }
+
+  /** Draw the character translucent: its agent has no process (`offline`). */
+  setAgentOffline(id: number, offline: boolean): void {
+    const ch = this.characters.get(id);
+    if (ch) ch.isOffline = offline;
+  }
+
+  /** The tool-kind icon drawn above the head while no bubble shows (ux.md 행동 매핑). */
+  setAgentActivityIcon(id: number, icon: ActivityIcon | null): void {
+    const ch = this.characters.get(id);
+    if (ch) ch.activityIcon = icon;
+  }
+
+  /**
+   * Show a bubble. Timed bubbles fade out after WAITING_BUBBLE_DURATION_SEC
+   * like the inherited waiting bubble; untimed ones stay until cleared.
+   */
+  showBubble(id: number, bubble: CharacterBubble, timed: boolean): void {
+    const ch = this.characters.get(id);
+    if (!ch) return;
+    ch.bubbleType = bubble;
+    ch.waitingAwaitingInput = false;
+    ch.bubbleTimer = timed ? WAITING_BUBBLE_DURATION_SEC : 0;
+  }
+
+  /** Clear the bubble, only while it is still `bubble` (a newer bubble stays). */
+  clearBubble(id: number, bubble: CharacterBubble): void {
+    const ch = this.characters.get(id);
+    if (ch && ch.bubbleType === bubble) {
+      ch.bubbleType = null;
+      ch.bubbleTimer = 0;
     }
   }
 
@@ -1114,8 +1160,9 @@ export class OfficeState {
         updateCharacter(ch, dt, this.walkableTiles, this.seats, this.tileMap, this.blockedTiles),
       );
 
-      // Tick bubble timer for waiting bubbles
-      if (ch.bubbleType === 'waiting') {
+      // Tick bubble timer for timed bubbles (waiting; the desktop's run-outcome
+      // bubbles). Permission and lasting error bubbles have no timer.
+      if (ch.bubbleType && ch.bubbleType !== 'permission' && ch.bubbleTimer > 0) {
         ch.bubbleTimer -= dt;
         if (ch.bubbleTimer <= 0) {
           ch.bubbleType = null;

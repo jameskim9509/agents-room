@@ -43,6 +43,8 @@ export const SELECTED_OUTLINE_ALPHA = 1.0;
 export const HOVERED_OUTLINE_ALPHA = 0.5;
 /** Headless agents (adopted, no terminal to focus) render slightly translucent. */
 export const HEADLESS_CHARACTER_ALPHA = 0.5;
+/** agents-room desktop: an `offline` agent (no process) is as translucent as a headless one (ux.md 상태 어휘). */
+export const OFFLINE_CHARACTER_ALPHA = 0.5;
 export const GHOST_PREVIEW_SPRITE_ALPHA = 0.5;
 export const GHOST_PREVIEW_TINT_ALPHA = 0.25;
 export const SELECTION_DASH_PATTERN: [number, number] = [4, 3];
@@ -320,3 +322,23 @@ export const TRANSPORT_INBOUND_BUFFER_MAX = 1000;
 // ── Desktop: local runtime state (runtimeState.ts) ──────────────
 /** Events held per agent, newest kept. Matches the snapshot's `recentEvents` cap (ADR 0005 decision 2). */
 export const RUNTIME_RECENT_EVENTS_MAX = 200;
+
+// ── Desktop: panels and world (desktopUi/) ──────────────────────
+/** Left column (project, files, agents): a share of the window between two bounds. */
+export const DESKTOP_PROJECT_PANEL_WIDTH = 'clamp(220px, 22vw, 320px)';
+/** Right column (Detail Panel). */
+export const DESKTOP_DETAIL_PANEL_WIDTH = 'clamp(280px, 30vw, 440px)';
+/** Indent per tree depth in the minimal file tree (CSS px). */
+export const FILE_TREE_INDENT_PX = 14;
+/** The panels re-render at most once per animation frame; this timer stands in when frames stall. */
+export const RUNTIME_STATE_RENDER_FALLBACK_MS = 50;
+/** World px above a runtime character's anchor (feet) where its name label's bottom sits: above its bubble. */
+export const AGENT_LABEL_RISE_WORLD = 42;
+/** An offline agent's label is dimmed like its character. */
+export const AGENT_LABEL_OFFLINE_OPACITY = 0.7;
+/** Longest raw tool input shown in a permission request before it is cut (characters). */
+export const PERMISSION_INPUT_PREVIEW_MAX = 400;
+/** The Detail Panel's 최근 이벤트 list scrolls inside this height (CSS px). */
+export const DETAIL_EVENTS_MAX_HEIGHT_PX = 280;
+/** Within this many CSS px of its end, the event list counts as following the newest row. */
+export const EVENTS_END_SLACK_PX = 8;
