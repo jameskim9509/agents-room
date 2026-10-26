@@ -65,7 +65,7 @@ function parseDescriptor(descriptorPath: string, text: string): string[] {
  *    as-is; tests and debugging). The caller passes it only for an unpackaged app
  *    (`readDevOverrides`).
  * 2. the dev descriptor (`{java, jar}`, launched with the UTF-8 JVM flags),
- * 3. otherwise a `missing` error. A packaged app has no descriptor yet (Sprint 1).
+ * 3. otherwise a `missing` error. A packaged app has no descriptor yet (Sprint 2).
  */
 export function resolveRuntimeCommand(
   override: string | undefined,
