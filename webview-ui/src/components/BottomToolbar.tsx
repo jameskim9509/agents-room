@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { WorkspaceFolder } from '../hooks/useExtensionMessages.js';
-import { isBrowserRuntime } from '../runtime.js';
+import { isDesktopRuntime, isVsCodeRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
 import { Button } from './ui/Button.js';
 import { Dropdown, DropdownItem } from './ui/Dropdown.js';
@@ -83,8 +83,9 @@ export function BottomToolbar({
 
   return (
     <div className="absolute bottom-10 left-10 z-20 flex items-center gap-4 pixel-panel p-4">
-      {/* Hide + Agent in standalone browser mode (no terminal to interact with) */}
-      {!isBrowserRuntime && (
+      {/* + Agent launches a VS Code terminal. Hidden in standalone (no terminal to interact
+          with) and in the desktop shell (agents start through the local runtime instead). */}
+      {isVsCodeRuntime && (
         <div
           ref={folderPickerRef}
           className="relative"
@@ -120,13 +121,16 @@ export function BottomToolbar({
           </Dropdown>
         </div>
       )}
-      <Button
-        variant={isEditMode ? 'active' : 'default'}
-        onClick={onToggleEditMode}
-        title="Edit office layout"
-      >
-        Layout
-      </Button>
+      {/* Layout editing is post-MVP in the desktop shell (SCRUM-59). */}
+      {!isDesktopRuntime && (
+        <Button
+          variant={isEditMode ? 'active' : 'default'}
+          onClick={onToggleEditMode}
+          title="Edit office layout"
+        >
+          Layout
+        </Button>
+      )}
       <Button
         variant={isSettingsOpen ? 'active' : 'default'}
         onClick={onToggleSettings}

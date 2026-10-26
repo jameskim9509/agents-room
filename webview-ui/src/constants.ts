@@ -312,3 +312,11 @@ export const PET_THUMB_SCALE_MARGIN = 0.85;
 export const EMPTY_SPRITE_THUMBNAIL_BG = '#333';
 /** Maximum string length for a PlacedPet.id (defends against pathologically-long layout entries). */
 export const MAX_PET_ID_LENGTH = 128;
+
+// ── Transport ───────────────────────────────────────────────────
+/** Inbound frames a WebSocketTransport holds while nobody is subscribed. Oldest dropped beyond this. */
+export const TRANSPORT_INBOUND_BUFFER_MAX = 1000;
+
+// ── Desktop: local runtime state (runtimeState.ts) ──────────────
+/** Events held per agent, newest kept. Matches the snapshot's `recentEvents` cap (ADR 0005 decision 2). */
+export const RUNTIME_RECENT_EVENTS_MAX = 200;

@@ -9,14 +9,21 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { MAX_PET_PNG_SIZE } from './constants.js';
 import {
   decodeCharacterPng,
   decodeFloorPng,
+  decodePetPng,
   parseCarpetPng,
   parseWallPng,
   pngToSpriteData,
 } from './pngDecoder.js';
-import type { CatalogEntry, CharacterDirectionSprites } from './types.js';
+import type {
+  CatalogEntry,
+  CharacterDirectionSprites,
+  PetManifest,
+  PetSpriteFrames,
+} from './types.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -86,4 +93,42 @@ export function decodeAllFurniture(
     }
   }
   return sprites;
+}
+
+/** Decoded bundled pets, parallel to their display names (the `petSpritesLoaded` payload). */
+export interface DecodedPets {
+  pets: PetSpriteFrames[];
+  petNames: string[];
+}
+
+/**
+ * Decode `<assetsDir>/pets/<dir>/{manifest.json,pet.png}` in directory-name
+ * order, with the rules of the server loader (`loadPetSprites` in
+ * `server/src/assetLoader.ts`): both files present, manifest `id` and `name`
+ * set, PNG at most `MAX_PET_PNG_SIZE`. Other pets are skipped.
+ */
+export function decodeAllPets(assetsDir: string): DecodedPets {
+  const petsDir = path.join(assetsDir, 'pets');
+  const result: DecodedPets = { pets: [], petNames: [] };
+  if (!fs.existsSync(petsDir)) return result;
+  const dirNames = fs
+    .readdirSync(petsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  for (const dirName of dirNames) {
+    const manifestPath = path.join(petsDir, dirName, 'manifest.json');
+    const pngPath = path.join(petsDir, dirName, 'pet.png');
+    try {
+      if (!fs.existsSync(manifestPath) || !fs.existsSync(pngPath)) continue;
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as Partial<PetManifest>;
+      if (!manifest.id || !manifest.name) continue;
+      if (fs.statSync(pngPath).size > MAX_PET_PNG_SIZE) continue;
+      result.pets.push(decodePetPng(fs.readFileSync(pngPath)));
+      result.petNames.push(manifest.name);
+    } catch (err) {
+      console.warn(`[decodeAssets] Failed to decode pet ${dirName}:`, err);
+    }
+  }
+  return result;
 }

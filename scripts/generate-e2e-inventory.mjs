@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Generate the e2e/README.md test inventory section from Playwright's
- * `--list --reporter=json` output.
+ * `--list --reporter=json` output, for every Playwright config in SUITES
+ * (the legacy VS Code/standalone suite and the desktop shell suite).
  *
  * Tests are grouped by their `@area:<tag>` annotation (extracted from the
  * test title by Playwright into the `tags` array). Tests without an
@@ -24,10 +25,20 @@ const BEGIN_MARKER = '<!-- BEGIN:E2E-INVENTORY -->';
 const END_MARKER = '<!-- END:E2E-INVENTORY -->';
 const PLAYWRIGHT_CLI = path.join(REPO_ROOT, 'node_modules', 'playwright', 'cli.js');
 
-function listTests() {
+/**
+ * One entry per Playwright config. `spec.file` is relative to the config's
+ * testDir, so each suite says how to print it: the legacy suite keeps its
+ * historical `e2e/<file>` form, the desktop suite prints the real path.
+ */
+const SUITES = [
+  { config: 'e2e/playwright.config.ts', filePrefix: 'e2e/' },
+  { config: 'e2e/playwright.desktop.config.ts', filePrefix: 'e2e/desktop/' },
+];
+
+function listTests(config) {
   const json = execFileSync(
     process.execPath,
-    [PLAYWRIGHT_CLI, 'test', '--list', '--reporter=json', '--config=e2e/playwright.config.ts'],
+    [PLAYWRIGHT_CLI, 'test', '--list', '--reporter=json', `--config=${config}`],
     { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
   return JSON.parse(json);
@@ -37,21 +48,21 @@ function listTests() {
  * Walk the recursive suites tree and yield every spec with its full path.
  * Each yielded entry: { title, file, line, tags, describePath }
  */
-function* walkSpecs(suites, describePath = []) {
+function* walkSpecs(suites, filePrefix, describePath = []) {
   for (const suite of suites ?? []) {
     const isFileSuite = suite.line === 0;
     const nextDescribe = isFileSuite ? describePath : [...describePath, suite.title];
     for (const spec of suite.specs ?? []) {
       yield {
         title: spec.title,
-        file: spec.file,
+        file: `${filePrefix}${spec.file.replace(/\\/g, '/')}`,
         line: spec.line,
         tags: spec.tags ?? [],
         describePath: nextDescribe,
       };
     }
     if (suite.suites) {
-      yield* walkSpecs(suite.suites, nextDescribe);
+      yield* walkSpecs(suite.suites, filePrefix, nextDescribe);
     }
   }
 }
@@ -107,7 +118,7 @@ function renderInventory(groups) {
     for (const spec of list) {
       const titleClean = spec.title.replace(/\s*@area:\S+/g, '').trim();
       const describe = spec.describePath.length > 0 ? ` (${spec.describePath.join(' › ')})` : '';
-      lines.push(`- \`e2e/${spec.file}:${spec.line}\` — ${titleClean}${describe}`);
+      lines.push(`- \`${spec.file}:${spec.line}\` — ${titleClean}${describe}`);
     }
     lines.push('');
   }
@@ -128,8 +139,9 @@ function splice(readme, payload) {
 }
 
 function main() {
-  const result = listTests();
-  const specs = [...walkSpecs(result.suites)];
+  const specs = SUITES.flatMap(({ config, filePrefix }) => [
+    ...walkSpecs(listTests(config).suites, filePrefix),
+  ]);
   const groups = groupByArea(specs);
   const payload = renderInventory(groups);
   const readme = readFileSync(README_PATH, 'utf8');

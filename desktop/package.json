@@ -1,0 +1,23 @@
+{
+  "name": "agents-room-desktop",
+  "productName": "agents-room",
+  "private": true,
+  "version": "0.0.0",
+  "description": "agents-room desktop shell (Electron main + preload)",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "electron:install": "install-electron",
+    "start": "electron .",
+    "dev": "node scripts/dev.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "26.x",
+    "electron": "45.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

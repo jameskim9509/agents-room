@@ -19,7 +19,7 @@ import {
 } from '../office/toolUtils.js';
 import type { OfficeLayout, ToolActivity } from '../office/types.js';
 import { setWallSprites } from '../office/wallTiles.js';
-import { isBrowserRuntime, isE2E } from '../runtime.js';
+import { isE2E, isVsCodeRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
 
 /**
@@ -27,11 +27,11 @@ import { transport } from '../transport/index.js';
  * picked up by Watch All Sessions) and therefore has no terminal to focus. Its
  * character renders translucent so it reads as untouchable at a glance.
  *
- * Standalone is exempt: that adapter has no terminals at all, so every agent
- * would qualify and the cue would distinguish nothing.
+ * VS Code only: standalone and the desktop shell have no terminals at all, so
+ * every agent would qualify and the cue would distinguish nothing.
  */
 const isHeadlessAgent = (isExternal: boolean | undefined): boolean =>
-  isExternal === true && !isBrowserRuntime;
+  isExternal === true && isVsCodeRuntime;
 
 export interface SubagentCharacter {
   id: number;
@@ -738,6 +738,9 @@ export function useExtensionMessages(
       }
     };
     const unsubscribe = transport.onMessage(handler);
+    // The desktop shell's office transport drops it: the local runtime sends
+    // its snapshot on every connect without being asked
+    // (DesktopOfficeTransport.send in transport/desktopTransport.ts).
     transport.send({ type: 'webviewReady' });
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps

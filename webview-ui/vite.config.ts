@@ -6,23 +6,40 @@ import type { Plugin } from 'vite';
 import { defineConfig } from 'vite';
 
 import { buildAssetIndex, buildFurnitureCatalog } from '../core/src/assets/build.ts';
+import { DECODED_ASSET_PATHS } from '../core/src/assets/constants.ts';
 import {
   decodeAllCarpets,
   decodeAllCharacters,
   decodeAllFloors,
   decodeAllFurniture,
+  decodeAllPets,
   decodeAllWalls,
 } from '../core/src/assets/loader.ts';
 
 // ── Decoded asset cache (invalidated on file change) ─────────────────────────
 
-interface DecodedCache {
-  characters: ReturnType<typeof decodeAllCharacters> | null;
-  floors: ReturnType<typeof decodeAllFloors> | null;
-  walls: ReturnType<typeof decodeAllWalls> | null;
-  carpets: ReturnType<typeof decodeAllCarpets> | null;
-  furniture: ReturnType<typeof decodeAllFurniture> | null;
+type DecodedKind = keyof typeof DECODED_ASSET_PATHS;
+type DecodedCache = Partial<Record<DecodedKind, unknown>>;
+
+/** Decode one sprite group from the PNG sources. Shared by dev middleware and build output. */
+function decodeKind(kind: DecodedKind, assetsDir: string): unknown {
+  switch (kind) {
+    case 'characters':
+      return decodeAllCharacters(assetsDir);
+    case 'floors':
+      return decodeAllFloors(assetsDir);
+    case 'walls':
+      return decodeAllWalls(assetsDir);
+    case 'carpets':
+      return decodeAllCarpets(assetsDir);
+    case 'furniture':
+      return decodeAllFurniture(assetsDir, buildFurnitureCatalog(assetsDir));
+    case 'pets':
+      return decodeAllPets(assetsDir);
+  }
 }
+
+const DECODED_KINDS = Object.keys(DECODED_ASSET_PATHS) as DecodedKind[];
 
 // ── Vite plugin ───────────────────────────────────────────────────────────────
 
@@ -33,20 +50,10 @@ function browserMockAssetsPlugin(): Plugin {
   // (e.g. the build-subpath integration test) still receive the JSON sidecars.
   let distAssetsDir = path.resolve(__dirname, '../dist/webview/assets');
 
-  const cache: DecodedCache = {
-    characters: null,
-    floors: null,
-    walls: null,
-    carpets: null,
-    furniture: null,
-  };
+  let cache: DecodedCache = {};
 
   function clearCache(): void {
-    cache.characters = null;
-    cache.floors = null;
-    cache.walls = null;
-    cache.carpets = null;
-    cache.furniture = null;
+    cache = {};
   }
 
   return {
@@ -68,32 +75,14 @@ function browserMockAssetsPlugin(): Plugin {
         res.end(JSON.stringify(buildAssetIndex(assetsDir)));
       });
 
-      // Pre-decoded sprites (new — eliminates browser-side PNG decoding)
-      server.middlewares.use(`${base}/assets/decoded/characters.json`, (_req, res) => {
-        cache.characters ??= decodeAllCharacters(assetsDir);
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(cache.characters));
-      });
-      server.middlewares.use(`${base}/assets/decoded/floors.json`, (_req, res) => {
-        cache.floors ??= decodeAllFloors(assetsDir);
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(cache.floors));
-      });
-      server.middlewares.use(`${base}/assets/decoded/walls.json`, (_req, res) => {
-        cache.walls ??= decodeAllWalls(assetsDir);
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(cache.walls));
-      });
-      server.middlewares.use(`${base}/assets/decoded/carpets.json`, (_req, res) => {
-        cache.carpets ??= decodeAllCarpets(assetsDir);
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(cache.carpets));
-      });
-      server.middlewares.use(`${base}/assets/decoded/furniture.json`, (_req, res) => {
-        cache.furniture ??= decodeAllFurniture(assetsDir, buildFurnitureCatalog(assetsDir));
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify(cache.furniture));
-      });
+      // Pre-decoded sprites (eliminates browser-side PNG decoding)
+      for (const kind of DECODED_KINDS) {
+        server.middlewares.use(`${base}/assets/${DECODED_ASSET_PATHS[kind]}`, (_req, res) => {
+          cache[kind] ??= decodeKind(kind, assetsDir);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(cache[kind]));
+        });
+      }
 
       // Hot-reload on asset file changes (PNGs, manifests, layouts)
       server.watcher.add(assetsDir);
@@ -105,7 +94,9 @@ function browserMockAssetsPlugin(): Plugin {
         }
       });
     },
-    // Build output includes lightweight metadata consumed by browser runtime.
+    // Build output: the asset metadata plus the same pre-decoded sprite JSON the
+    // dev middleware serves. The desktop renderer loads its own assets from these
+    // files under app://bundle (no runtime message carries sprites).
     closeBundle() {
       fs.mkdirSync(distAssetsDir, { recursive: true });
 
@@ -115,6 +106,11 @@ function browserMockAssetsPlugin(): Plugin {
         path.join(distAssetsDir, 'asset-index.json'),
         JSON.stringify(buildAssetIndex(assetsDir)),
       );
+      for (const kind of DECODED_KINDS) {
+        const outFile = path.join(distAssetsDir, DECODED_ASSET_PATHS[kind]);
+        fs.mkdirSync(path.dirname(outFile), { recursive: true });
+        fs.writeFileSync(outFile, JSON.stringify(decodeKind(kind, assetsDir)));
+      }
     },
   };
 }

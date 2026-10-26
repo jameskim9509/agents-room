@@ -20,7 +20,8 @@
  *  4. Concatenate all model outputs into a single core/src/messages.ts file with a
  *     header banner (DO NOT EDIT MANUALLY). Modelina inlines nested unions, so the
  *     ADR 0005 `AgentEvent` union is declared by name and every property that
- *     holds an AgentEvent refers to it.
+ *     holds an AgentEvent refers to it. `RuntimeServerMessage` and
+ *     `RuntimeClientMessage` follow their unions: the members without `x-legacy`.
  *  5. Run prettier --write + eslint --fix on the file so it matches repo style and
  *     is reviewable as code (committed file, not gitignored).
  *
@@ -82,6 +83,11 @@ const HEADER = `/**
 const AGENT_EVENT = 'AgentEvent';
 const AGENT_EVENT_HOST = 'AgentEventMessage';
 const AGENT_EVENT_PROPERTY = 'event';
+/** Each top-level union and the name of its agents-room half (TS only, see declareRuntimeUnions). */
+const RUNTIME_UNIONS = [
+  ['ServerMessage', 'RuntimeServerMessage'],
+  ['ClientMessage', 'RuntimeClientMessage'],
+] as const;
 const AGENT_EVENT_ENVELOPE = 'x-envelope';
 
 const JAVA_BANNER_FIRST_LINE = '// AUTO-GENERATED FROM core/asyncapi.yaml. DO NOT EDIT MANUALLY.';
@@ -196,6 +202,7 @@ async function generateTypeScript(yaml: string): Promise<void> {
   // default when emitted via .generate(); we add `export` to every declaration.
   const declarations = filtered.map((m) => exportify(m.result));
   nameAgentEventUnion(filtered, declarations);
+  declareRuntimeUnions(filtered, declarations);
   const body = declarations.join('\n\n');
 
   fs.writeFileSync(OUTPUT_PATH, HEADER + body + '\n', 'utf-8');
@@ -255,6 +262,33 @@ function nameAgentEventUnion(models: OutputModel[], declarations: string[]): voi
     0,
     `/** One ADR 0005 AgentEvent, discriminated by \`kind\`. */\nexport type ${AGENT_EVENT} = ${unionText};`,
   );
+}
+
+/**
+ * The agents-room half of each top-level union: its members without
+ * `x-legacy`, declared right after the union (`RuntimeServerMessage` after
+ * `ServerMessage`). The desktop renderer types its runtime socket with them,
+ * so a frame the runtime never sends cannot be handled there and an upstream
+ * command cannot be sent to the runtime. The Java bindings need no such
+ * union: they leave the legacy members out altogether.
+ */
+function declareRuntimeUnions(models: OutputModel[], declarations: string[]): void {
+  for (const [unionName, runtimeName] of RUNTIME_UNIONS) {
+    const model = models.find((m) => m.modelName === unionName)?.model;
+    if (!(model instanceof ConstrainedUnionModel)) {
+      fail(`${unionName} is not a union; cannot declare ${runtimeName}.`);
+    }
+    const members = model.union.filter((member) => !isLegacy(member.originalInput));
+    if (members.length === 0) fail(`union ${unionName} has no agents-room members.`);
+    const index = declarations.findIndex((d) => d.startsWith(`export type ${unionName} =`));
+    if (index === -1) fail(`could not find the ${unionName} declaration.`);
+    declarations.splice(
+      index + 1,
+      0,
+      `/** The agents-room members of \`${unionName}\` (no \`x-legacy\`). */\n` +
+        `export type ${runtimeName} = ${members.map((member) => member.type).join(' | ')};`,
+    );
+  }
 }
 
 async function generateJava(yaml: string, options: Options): Promise<void> {

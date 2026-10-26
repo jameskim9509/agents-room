@@ -1,5 +1,9 @@
 import type { ServerMessage } from '../../../core/src/messages.js';
+import { getDesktopBridge } from '../desktopBridge.js';
+import type { LocalAssetMessage } from '../localAssets.js';
 import { isBrowserRuntime } from '../runtime.js';
+import type { RuntimeStateStore } from '../runtimeState.js';
+import { createDesktopTransports } from './desktopTransport.js';
 import { PostMessageTransport } from './postMessageTransport.js';
 import type { MessageTransport } from './types.js';
 import { WebSocketTransport } from './webSocketTransport.js';
@@ -41,6 +45,32 @@ function createTransport(): MessageTransport {
   return ws;
 }
 
+// The desktop branch comes first: the desktop page is not served by the
+// runtime, so the browser branch's `location.host` URL would be wrong
+// (app://bundle). It is the only branch with two transports: the office's,
+// and the runtime socket behind it (desktopTransport.ts).
+const desktopBridge = getDesktopBridge();
+const desktop = desktopBridge ? createDesktopTransports(desktopBridge) : null;
+
 /** Singleton transport instance. Import this everywhere instead of vscodeApi. */
-export const transport: MessageTransport = createTransport();
+export const transport: MessageTransport = desktop?.office ?? createTransport();
+
+/**
+ * Desktop shell only (`null` elsewhere): the latest snapshot, project, agent
+ * list and command results the local runtime sent (runtimeState.ts).
+ */
+export const runtimeStateStore: RuntimeStateStore | null = desktop?.runtimeState ?? null;
+
+/**
+ * Deliver a frame that originates in the renderer itself (the desktop
+ * renderer's bundled assets, localAssets.ts) to the office's subscribers.
+ * Held until the first subscriber, like a socket frame. No-op outside the
+ * desktop shell, where the extension or the server sends every asset.
+ * The office reads these frames as the upstream variants of the same names,
+ * so a `LocalAssetMessage` that drifts from them does not compile here.
+ */
+export function deliverLocal(message: LocalAssetMessage): void {
+  desktop?.office.deliver(message);
+}
+
 export type { MessageTransport } from './types.js';

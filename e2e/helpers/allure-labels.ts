@@ -15,6 +15,8 @@ const AREA_TO_EPIC: Record<string, string> = {
   pets: 'Pet system',
   carpet: 'Carpet system',
   areas: 'Areas (zoning) system',
+  'desktop-shell': 'Desktop shell',
+  'desktop-runtime': 'Desktop shell with the local runtime',
 };
 
 /**

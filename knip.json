@@ -51,6 +51,19 @@
       "project": [
         "src/**/*.{ts,tsx}"
       ]
+    },
+    "desktop": {
+      "entry": [
+        "src/main.ts",
+        "src/preload.ts",
+        "test/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "*.mjs",
+        "scripts/*.mjs"
+      ]
     }
   }
 }

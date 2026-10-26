@@ -16,16 +16,21 @@ export type TransportState =
 /**
  * Transport-agnostic message layer between webview and extension/server.
  *
+ * `In` is what arrives, `Out` what may be sent. They default to the whole
+ * protocol (`ServerMessage`, `ClientMessage`); the agents-room desktop
+ * renderer types its local-runtime socket with the agents-room halves
+ * (`RuntimeServerMessage`, `RuntimeClientMessage`).
+ *
  * Implementations:
  * - PostMessageTransport: VS Code webview (acquireVsCodeApi); permanently `connected`.
- * - WebSocketTransport: standalone browser; reports connecting/reconnecting/disconnected
- *   as the socket comes and goes.
+ * - WebSocketTransport: standalone browser and the desktop shell; reports
+ *   connecting/reconnecting/disconnected as the socket comes and goes.
  */
-export interface MessageTransport {
+export interface MessageTransport<In = ServerMessage, Out = ClientMessage> {
   /** Send a message to the extension/server. */
-  send(message: ClientMessage): void;
+  send(message: Out): void;
   /** Subscribe to messages from the extension/server. Returns unsubscribe function. */
-  onMessage(handler: (message: ServerMessage) => void): () => void;
+  onMessage(handler: (message: In) => void): () => void;
   /** Resolves once the transport has connected for the first time. */
   readonly ready: Promise<void>;
   /** Current connection state (valid from construction). */

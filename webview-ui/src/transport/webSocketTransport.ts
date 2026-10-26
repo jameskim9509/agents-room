@@ -5,28 +5,51 @@ import {
   TRANSPORT_STATE_RECONNECTING,
 } from '../../../core/src/constants.js';
 import type { ClientMessage, ServerMessage } from '../../../core/src/messages.js';
+import { HeldMessages } from './heldMessages.js';
 import type { MessageTransport, TransportState } from './types.js';
 
 /**
- * WebSocket transport for standalone browser mode.
- * Connects to the Pixel Agents server via WebSocket for bidirectional messaging.
- * Includes automatic reconnection with exponential backoff and message queuing.
+ * Where to connect. A string is used as-is for every attempt (standalone: the
+ * URL is fixed for the page's lifetime). A function is asked again before
+ * every connect and reconnect, so an endpoint that is not known yet (desktop:
+ * the runtime has not printed its ready line) or that changed (a restarted
+ * runtime has a new port and token) is picked up without reloading the page.
  */
-export class WebSocketTransport implements MessageTransport {
+export type WebSocketEndpoint = string | (() => Promise<string>);
+
+/**
+ * WebSocket transport for standalone browser mode and the desktop shell.
+ * Includes automatic reconnection with exponential backoff and message queuing.
+ *
+ * `In` and `Out` are the frames it receives and sends: the whole protocol in
+ * standalone, the agents-room frames on the desktop runtime socket. Frames are
+ * parsed, not validated: the type says what the peer is contracted to send.
+ *
+ * Inbound frames that arrive while nobody is subscribed are held, in order,
+ * and handed to the first subscriber instead of being dropped (HeldMessages),
+ * so the desktop runtime's connect-time snapshot survives the gap before
+ * React mounts.
+ */
+export class WebSocketTransport<
+  In = ServerMessage,
+  Out = ClientMessage,
+> implements MessageTransport<In, Out> {
   private ws: WebSocket | null = null;
-  private handlers: Array<(msg: ServerMessage) => void> = [];
   private stateHandlers: Array<(state: TransportState) => void> = [];
-  private url: string;
+  private readonly endpoint: WebSocketEndpoint;
+  /** Bumped on every connect() so a late endpoint resolution can't open a stale socket. */
+  private connectSeq = 0;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
-  private pendingMessages: ClientMessage[] = [];
+  private pendingMessages: Out[] = [];
+  private readonly inbound = new HeldMessages<In>();
   private _state: TransportState = TRANSPORT_STATE_CONNECTING;
   private readonly _ready: Promise<void>;
   private resolveReady!: () => void;
 
-  constructor(url: string) {
-    this.url = url;
+  constructor(endpoint: WebSocketEndpoint) {
+    this.endpoint = endpoint;
     this._ready = new Promise<void>((resolve) => {
       this.resolveReady = resolve;
     });
@@ -54,7 +77,27 @@ export class WebSocketTransport implements MessageTransport {
       this.reconnectAttempts > 0 ? TRANSPORT_STATE_RECONNECTING : TRANSPORT_STATE_CONNECTING,
     );
 
-    this.ws = new WebSocket(this.url);
+    const seq = ++this.connectSeq;
+    if (typeof this.endpoint === 'string') {
+      this.open(this.endpoint);
+      return;
+    }
+    this.endpoint().then(
+      (url) => {
+        if (this.disposed || seq !== this.connectSeq) return;
+        this.open(url);
+      },
+      (err: unknown) => {
+        if (this.disposed || seq !== this.connectSeq) return;
+        console.warn('[Transport] Could not resolve the WebSocket endpoint', err);
+        this.setState(TRANSPORT_STATE_RECONNECTING);
+        this.scheduleReconnect();
+      },
+    );
+  }
+
+  private open(url: string): void {
+    this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
@@ -69,12 +112,13 @@ export class WebSocketTransport implements MessageTransport {
     };
 
     this.ws.onmessage = (e: MessageEvent) => {
+      let msg: In;
       try {
-        const msg = JSON.parse(e.data as string) as ServerMessage;
-        for (const handler of this.handlers) handler(msg);
+        msg = JSON.parse(e.data as string) as In;
       } catch {
-        // Malformed JSON, ignore
+        return; // Malformed JSON, ignore
       }
+      this.inbound.dispatch(msg);
     };
 
     this.ws.onclose = () => {
@@ -89,7 +133,7 @@ export class WebSocketTransport implements MessageTransport {
     };
   }
 
-  send(message: ClientMessage): void {
+  send(message: Out): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     } else {
@@ -98,20 +142,17 @@ export class WebSocketTransport implements MessageTransport {
     }
   }
 
-  onMessage(handler: (message: ServerMessage) => void): () => void {
-    this.handlers.push(handler);
-    return () => {
-      this.handlers = this.handlers.filter((h) => h !== handler);
-    };
+  onMessage(handler: (message: In) => void): () => void {
+    return this.inbound.subscribe(handler);
   }
 
   /**
    * Deliver an externally-sourced message to all handlers, as if it had arrived
    * over the socket. Used in Vite dev mode to bridge `browserMock`'s injected
-   * `window` messages (there is no real server to connect to in dev).
+   * `window` messages. Held like a socket frame while nobody subscribes.
    */
-  deliver(message: ServerMessage): void {
-    for (const handler of this.handlers) handler(message);
+  deliver(message: In): void {
+    this.inbound.dispatch(message);
   }
 
   onStateChange(handler: (state: TransportState) => void): () => void {
@@ -129,7 +170,7 @@ export class WebSocketTransport implements MessageTransport {
     }
     this.ws?.close();
     this.ws = null;
-    this.handlers = [];
+    this.inbound.clear();
     this.pendingMessages = [];
     this.setState(TRANSPORT_STATE_DISCONNECTED);
     this.stateHandlers = [];

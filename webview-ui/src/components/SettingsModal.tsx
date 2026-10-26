@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 
 import { isSoundEnabled, setSoundEnabled } from '../notificationSound.js';
-import { isBrowserRuntime } from '../runtime.js';
+import { isBrowserRuntime, isDesktopRuntime, isVsCodeRuntime } from '../runtime.js';
 import { transport } from '../transport/index.js';
 import { Button } from './ui/Button.js';
 import { Checkbox } from './ui/Checkbox.js';
@@ -64,8 +64,9 @@ export function SettingsModal({
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Settings">
-      {/* Open Sessions Folder opens an OS file manager — impossible in the browser. */}
-      {!isBrowserRuntime && (
+      {/* Open Sessions Folder asks the VS Code host to open ~/.claude/projects in the OS file
+          manager. Impossible in the browser, and the desktop shell has no Claude sessions. */}
+      {isVsCodeRuntime && (
         <MenuItem
           onClick={() => {
             transport.send({ type: 'openSessionsFolder' });
@@ -75,31 +76,40 @@ export function SettingsModal({
           Open Sessions Folder
         </MenuItem>
       )}
-      <MenuItem
-        onClick={() => {
-          if (isBrowserRuntime) {
-            onExportLayout();
-          } else {
-            transport.send({ type: 'exportLayout' });
-          }
-          onClose();
-        }}
-      >
-        Export Layout
-      </MenuItem>
-      <MenuItem
-        onClick={() => {
-          if (isBrowserRuntime) {
-            // Open the native file picker; the import is applied in onChange below.
-            fileInputRef.current?.click();
-          } else {
-            transport.send({ type: 'importLayout' });
+      {/* The desktop shell hides everything below that only the VS Code host or the upstream
+          server answers: layout import/export (layout editing is post-MVP, SCRUM-59), asset
+          directories, Watch All Sessions and the Claude hooks toggle.
+          TODO(contract): a setting the local runtime owns comes back here once the
+          renderer↔runtime contract (core/asyncapi.yaml) defines its message. */}
+      {!isDesktopRuntime && (
+        <MenuItem
+          onClick={() => {
+            if (isBrowserRuntime) {
+              onExportLayout();
+            } else {
+              transport.send({ type: 'exportLayout' });
+            }
             onClose();
-          }
-        }}
-      >
-        Import Layout
-      </MenuItem>
+          }}
+        >
+          Export Layout
+        </MenuItem>
+      )}
+      {!isDesktopRuntime && (
+        <MenuItem
+          onClick={() => {
+            if (isBrowserRuntime) {
+              // Open the native file picker; the import is applied in onChange below.
+              fileInputRef.current?.click();
+            } else {
+              transport.send({ type: 'importLayout' });
+              onClose();
+            }
+          }}
+        >
+          Import Layout
+        </MenuItem>
+      )}
       {isBrowserRuntime && (
         <input
           ref={fileInputRef}
@@ -118,7 +128,7 @@ export function SettingsModal({
         />
       )}
       {/* Browser has no native directory picker, so accept a typed absolute path. */}
-      {isBrowserRuntime ? (
+      {isBrowserRuntime && (
         <div className="flex items-center gap-4 py-4 px-10">
           <input
             type="text"
@@ -141,7 +151,9 @@ export function SettingsModal({
             Add
           </Button>
         </div>
-      ) : (
+      )}
+      {/* VS Code: the host opens its own folder picker. */}
+      {isVsCodeRuntime && (
         <MenuItem
           onClick={() => {
             transport.send({ type: 'addExternalAssetDirectory' });
@@ -179,24 +191,29 @@ export function SettingsModal({
           transport.send({ type: 'setSoundEnabled', enabled: newVal });
         }}
       />
-      <Checkbox
-        label="Watch All Sessions"
-        checked={watchAllSessions}
-        onChange={onToggleWatchAllSessions}
-      />
-      <Checkbox
-        label="Instant Detection (Hooks)"
-        checked={hooksInstalled}
-        onChange={onToggleHooksEnabled}
-      />
+      {!isDesktopRuntime && (
+        <Checkbox
+          label="Watch All Sessions"
+          checked={watchAllSessions}
+          onChange={onToggleWatchAllSessions}
+        />
+      )}
+      {!isDesktopRuntime && (
+        <Checkbox
+          label="Instant Detection (Hooks)"
+          checked={hooksInstalled}
+          onChange={onToggleHooksEnabled}
+        />
+      )}
       <Checkbox
         label="Always Show Labels"
         checked={alwaysShowOverlay}
         onChange={onToggleAlwaysShowOverlay}
       />
       {/* Headless agents are the office's only terminal-less citizens in VS Code.
-          Standalone has no terminals at all, so nothing there would ever ghost. */}
-      {!isBrowserRuntime && (
+          Standalone and the desktop shell have no terminals at all, so nothing there
+          would ever ghost. */}
+      {isVsCodeRuntime && (
         <Checkbox
           label="Display Headless as Ghosts"
           checked={ghostHeadlessAgents}

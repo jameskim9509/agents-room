@@ -44,6 +44,8 @@ class RuntimeJarTests {
     private static final Duration STARTUP = Duration.ofSeconds(60);
     /** RuntimeShutdown's grace period is 5 s; the JVM needs a little more to exit. */
     private static final Duration EXIT = Duration.ofSeconds(15);
+    /** On quit the shell kills the runtime's process tree this long after closing its stdin. */
+    private static final Duration SHELL_QUIT_GRACE = Duration.ofSeconds(3);
     private static final Pattern READY_LINE = Pattern.compile("AGENTS_ROOM_READY \\{\"port\":(\\d+)\\}\n");
     private static final boolean WINDOWS = OS.current() == OS.WINDOWS;
 
@@ -99,6 +101,31 @@ class RuntimeJarTests {
         if (WINDOWS) {
             assertThat(logs).contains("Child processes end with the runtime");
         }
+    }
+
+    @Test
+    void closesConnectedRenderersAndExitsWithinTheShellsGraceWhenStdinCloses() throws Exception {
+        // The desktop app quits with its renderer still connected. An open WebSocket must not hold the
+        // exit: the shell would kill the tree before the runtime has cleaned up.
+        Process runtime = start(runtimeCommand(), Map.of());
+        StreamCollector stderr = TestProcesses.collect(runtime.getErrorStream());
+        String readyLine =
+                new String(TestProcesses.readLineBytes(runtime.getInputStream(), STARTUP), StandardCharsets.UTF_8);
+        Matcher ready = READY_LINE.matcher(readyLine);
+        assertThat(ready.matches()).as("ready line %s", readyLine).isTrue();
+        CompletableFuture<Integer> closedByRuntime = new CompletableFuture<>();
+        String firstFrame = connectAndKeepOpen(Integer.parseInt(ready.group(1)), closedByRuntime);
+        assertThat(firstFrame).startsWith("{\"type\":\"snapshot\"");
+
+        long closedAt = System.nanoTime();
+        runtime.getOutputStream().close();
+
+        assertThat(runtime.waitFor(EXIT.toSeconds(), TimeUnit.SECONDS)).as("exit after stdin EOF").isTrue();
+        Duration exitTime = Duration.ofNanos(System.nanoTime() - closedAt);
+        assertThat(runtime.exitValue()).isZero();
+        assertThat(exitTime).isLessThan(SHELL_QUIT_GRACE);
+        assertThat(closedByRuntime).succeedsWithin(EXIT);
+        assertThat(stderr.awaitEnd(EXIT)).contains("Renderer disconnected (0 open)");
     }
 
     @Test
@@ -205,6 +232,34 @@ class RuntimeJarTests {
     private Process track(Process process) {
         started.add(process.toHandle());
         return process;
+    }
+
+    /** Connects a renderer and returns its first frame; the socket stays open until the runtime closes it. */
+    private static String connectAndKeepOpen(int port, CompletableFuture<Integer> closed) throws Exception {
+        CompletableFuture<String> first = new CompletableFuture<>();
+        HttpClient.newHttpClient()
+                .newWebSocketBuilder()
+                .buildAsync(URI.create("ws://127.0.0.1:" + port + "/ws?token=" + TOKEN), new WebSocket.Listener() {
+                    @Override
+                    public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+                        first.complete(data.toString());
+                        webSocket.request(1);
+                        return null;
+                    }
+
+                    @Override
+                    public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
+                        closed.complete(statusCode);
+                        return null;
+                    }
+
+                    @Override
+                    public void onError(WebSocket webSocket, Throwable error) {
+                        closed.completeExceptionally(error);
+                    }
+                })
+                .get(EXIT.toSeconds(), TimeUnit.SECONDS);
+        return first.get(EXIT.toSeconds(), TimeUnit.SECONDS);
     }
 
     private static String connectAndReadFirstFrame(int port) throws Exception {
