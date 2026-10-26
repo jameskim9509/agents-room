@@ -1,7 +1,8 @@
 /**
  * Desktop shell e2e helpers: launch the built Electron shell (desktop/dist +
  * dist/webview) through Playwright's `_electron`, against the fake runtime
- * (e2e/desktop/fixtures/fake-runtime.cjs) passed in AGENTS_ROOM_RUNTIME_COMMAND.
+ * (e2e/desktop/fixtures/fake-runtime.cjs) passed in AGENTS_ROOM_RUNTIME_COMMAND,
+ * or against the real runtime the shell finds through runtime/build/dev-runtime.json.
  *
  * Every launch gets its own HOME/USERPROFILE/APPDATA/LOCALAPPDATA and its own
  * Electron userData, so the single-instance lock, runtime.log and the
@@ -14,14 +15,24 @@ import {
   type Page,
 } from '@playwright/test';
 import { type ChildProcess, execFileSync } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 
+import type { RuntimeState } from '../../../webview-ui/src/runtimeState.js' with {
+  'resolution-mode': 'import',
+};
+
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const DESKTOP_DIR = path.join(REPO_ROOT, 'desktop');
+/** Written by `npm run runtime:build`; the unpackaged shell launches the runtime it names. */
+export const DEV_RUNTIME_DESCRIPTOR = path.join(REPO_ROOT, 'runtime', 'build', 'dev-runtime.json');
 const FAKE_RUNTIME = path.join(__dirname, '..', 'fixtures', 'fake-runtime.cjs');
 const IS_WINDOWS = process.platform === 'win32';
+/** One `<pid> <command line>` row per java.exe process. */
+const WINDOWS_JAVA_PROCESSES = `Get-CimInstance Win32_Process -Filter "Name='java.exe'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`;
 
 /** How the fake runtime behaves for one launch. See the flag list in fake-runtime.cjs. */
 export interface FakeRuntimeOptions {
@@ -36,6 +47,11 @@ export interface FakeRuntimeOptions {
 
 export interface LaunchDesktopOptions {
   runtime?: FakeRuntimeOptions;
+  /**
+   * Launch the real runtime instead of the fake: no AGENTS_ROOM_RUNTIME_COMMAND,
+   * so the shell reads DEV_RUNTIME_DESCRIPTOR itself. `runtime` is ignored.
+   */
+  realRuntime?: boolean;
   /** AGENTS_ROOM_READY_TIMEOUT_MS; the shell's default is 30 s. */
   readyTimeoutMs?: number;
 }
@@ -61,6 +77,56 @@ export interface FakeRuntimeState {
   childPid: number | null;
 }
 
+/** The launch descriptor the runtime's Gradle build writes. */
+export interface DevRuntimeDescriptor {
+  java: string;
+  jar: string;
+}
+
+/**
+ * The dev descriptor, or `null` when the runtime is not built here: no
+ * descriptor, or one naming a java or jar that does not exist.
+ */
+export function readDevRuntimeDescriptor(): DevRuntimeDescriptor | null {
+  try {
+    const descriptor = JSON.parse(
+      fs.readFileSync(DEV_RUNTIME_DESCRIPTOR, 'utf8'),
+    ) as Partial<DevRuntimeDescriptor>;
+    const { java, jar } = descriptor;
+    if (typeof java !== 'string' || typeof jar !== 'string') return null;
+    return fs.existsSync(java) && fs.existsSync(jar) ? { java, jar } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PIDs of the java processes whose command line runs `jar`, read from the OS
+ * process table. Any java started from this jar counts, whoever started it, so
+ * callers compare against a list taken before the launch.
+ */
+export function javaProcessesRunning(jar: string): number[] {
+  const table = IS_WINDOWS
+    ? execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_JAVA_PROCESSES],
+        { encoding: 'utf8', windowsHide: true },
+      )
+    : execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' });
+  // Windows paths are case-insensitive, and the table already holds java.exe only.
+  const needle = IS_WINDOWS ? jar.toLowerCase() : jar;
+  const pids: number[] = [];
+  for (const line of table.split(/\r?\n/)) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!match) continue;
+    const commandLine = IS_WINDOWS ? match[2].toLowerCase() : match[2];
+    if (commandLine.includes(needle) && (IS_WINDOWS || /\bjava\b/.test(commandLine))) {
+      pids.push(Number(match[1]));
+    }
+  }
+  return pids;
+}
+
 function fakeRuntimeArgv(
   runtime: FakeRuntimeOptions,
   stateDir: string,
@@ -79,15 +145,16 @@ function fakeRuntimeArgv(
 function isolatedEnv(
   tmpHome: string,
   userDataDir: string,
-  runtimeArgv: string[],
+  runtimeArgv: string[] | null,
   readyTimeoutMs: number | undefined,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
-  // A developer's `desktop:dev` shell must not leak dev mode into the test.
+  // A developer's `desktop:dev` shell must not leak dev mode, or a runtime command, into the test.
   delete env['AGENTS_ROOM_RENDERER_URL'];
+  delete env['AGENTS_ROOM_RUNTIME_COMMAND'];
   delete env['ELECTRON_RUN_AS_NODE'];
   env['HOME'] = tmpHome;
   if (IS_WINDOWS) {
@@ -100,7 +167,7 @@ function isolatedEnv(
     fs.mkdirSync(env['LOCALAPPDATA'], { recursive: true });
   }
   env['AGENTS_ROOM_USER_DATA_DIR'] = userDataDir;
-  env['AGENTS_ROOM_RUNTIME_COMMAND'] = JSON.stringify(runtimeArgv);
+  if (runtimeArgv) env['AGENTS_ROOM_RUNTIME_COMMAND'] = JSON.stringify(runtimeArgv);
   if (readyTimeoutMs !== undefined) env['AGENTS_ROOM_READY_TIMEOUT_MS'] = String(readyTimeoutMs);
   return env;
 }
@@ -212,9 +279,12 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
   const env = isolatedEnv(
     tmpHome,
     userDataDir,
-    fakeRuntimeArgv(opts.runtime ?? {}, stateDir, gateFile),
+    opts.realRuntime ? null : fakeRuntimeArgv(opts.runtime ?? {}, stateDir, gateFile),
     opts.readyTimeoutMs,
   );
+  // Real runtime: the JVMs running its jar before the launch are someone else's.
+  const realJar = opts.realRuntime ? readDevRuntimeDescriptor()?.jar : undefined;
+  const javaBefore = new Set(realJar ? javaProcessesRunning(realJar) : []);
 
   let app: ElectronApplication | undefined;
   let appProcess: ChildProcess | undefined;
@@ -225,6 +295,9 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
     for (const state of readFakeRuntimeStates(stateDir)) {
       if (state.childPid !== null) forceKill(state.childPid);
       forceKill(state.pid);
+    }
+    if (realJar) {
+      for (const pid of javaProcessesRunning(realJar)) if (!javaBefore.has(pid)) forceKill(pid);
     }
     fs.rmSync(tmpBase, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };
@@ -332,5 +405,63 @@ export function officeCanvasColorCount(window: Page): Promise<number> {
       }
     }
     return colors.size;
+  });
+}
+
+// ── Renderer test hooks and the runtime's /ws gate ───────────────────────────
+
+/**
+ * Turns on the renderer's e2e test hooks (`window.__pixelAgentsTestHooks`):
+ * the flag must be set before any app script runs, so the page is reloaded.
+ * The reload also opens a new runtime connection, which gets its own snapshot.
+ */
+export async function enableTestHooks(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    (window as unknown as { __PIXEL_AGENTS_E2E: boolean }).__PIXEL_AGENTS_E2E = true;
+  });
+  await page.reload();
+}
+
+/** What the renderer holds from the runtime's frames (`getRuntimeState` test hook). */
+export function rendererRuntimeState(page: Page): Promise<RuntimeState | null> {
+  return page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __pixelAgentsTestHooks?: { getRuntimeState?: () => RuntimeState | null };
+        }
+      ).__pixelAgentsTestHooks?.getRuntimeState?.() ?? null,
+  );
+}
+
+/**
+ * Sends a WebSocket upgrade request from the test process and resolves with
+ * the status: 101 when the runtime accepts it, otherwise the HTTP status it
+ * refused it with. An accepted socket is closed at once.
+ */
+export function webSocketHandshakeStatus(
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const request = http.request(url.replace(/^ws:/, 'http:'), {
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': crypto.randomBytes(16).toString('base64'),
+        ...headers,
+      },
+    });
+    request.on('upgrade', (response, socket) => {
+      socket.destroy();
+      resolve(response.statusCode ?? 101);
+    });
+    request.on('response', (response) => {
+      response.resume();
+      resolve(response.statusCode ?? 0);
+    });
+    request.on('error', reject);
+    request.end();
   });
 }

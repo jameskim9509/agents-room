@@ -3,11 +3,11 @@
 # Sprint 0 trimmed the inherited VS Code extension pipeline: the npm package
 # checks, the Node 20 package smoke job, the inherited 3 OS x 3 shard e2e
 # matrix (VS Code and standalone specs) and the Vercel Allure preview are gone.
-# The inherited e2e suite now runs only locally (npm run e2e). The Windows
-# desktop e2e job arrives with the desktop shell PR; macOS and Linux come with
-# SCRUM-64 (docs/adr/0001-desktop-framework.md, decision 7). The runtime job
+# The inherited e2e suite now runs only locally (npm run e2e). The runtime job
 # builds and tests the Java/Spring local runtime (runtime/) on Windows and
-# Linux.
+# Linux. The desktop-windows job runs the desktop shell's tests and its
+# Playwright Electron e2e suite (npm run e2e:desktop) on Windows only; macOS
+# and Linux come with SCRUM-64 (docs/adr/0001-desktop-framework.md, decision 7).
 
 name: CI
 
@@ -303,10 +303,73 @@ jobs:
           path: runtime/build/reports/tests/test/
           retention-days: 7
 
+  # The desktop shell (desktop/, ADR 0001) on Windows, the MVP platform: its
+  # unit tests and the Playwright Electron suite (npm run e2e:desktop) against
+  # the fake runtime and the real one. The real-runtime spec launches the boot
+  # jar that runtime/build/dev-runtime.json names; it skips itself only outside
+  # CI, so this job builds the runtime first. Electron 45 downloads its binary
+  # in a separate step (no postinstall), and Playwright drives that binary, so
+  # no Playwright browser is installed.
+  desktop-windows:
+    name: Desktop (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+          cache-dependency-path: |
+            runtime/*.gradle.kts
+            runtime/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Electron Binary
+        run: npm run electron:install -w agents-room-desktop
+
+      - name: Build Runtime
+        run: npm run runtime:build
+
+      - name: Build Renderer
+        run: npm run build:webview
+
+      - name: Build Desktop Shell
+        run: npm run build -w agents-room-desktop
+
+      - name: Desktop Unit Tests
+        run: npm run test:desktop
+
+      - name: Desktop E2E
+        run: npm run e2e:desktop -- --workers=1
+
+      - name: Upload Playwright Report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-playwright-report
+          path: |
+            playwright-report/e2e-desktop/
+            test-results/e2e-desktop/
+          retention-days: 7
+
   # Single aggregate status check: one name to watch instead of every job name
   # (which silently breaks when a job is renamed). Green only when every job in
-  # `needs` succeeded, so a new job (the Windows desktop job, for one) only has
-  # to be added to `needs`. Before branch protection requires this check, move
+  # `needs` succeeded, so a new job only has to be added to `needs`. Before branch protection requires this check, move
   # the Markdown filter out of `on:` (for example into a changes-detection
   # job): a docs-only PR never starts this workflow, and a required check that
   # never reports stays Pending and blocks the merge.
@@ -316,6 +379,7 @@ jobs:
     needs:
       - ci
       - runtime
+      - desktop-windows
     runs-on: ubuntu-latest
     steps:
       - name: Verify all required jobs succeeded

@@ -9,9 +9,10 @@
  * same JSON through its middleware, so dev and production take the same path.
  *
  * The result is the ordered list of the asset frames the office expects
- * (characters → pets → floors → walls → carpets → furniture → layout). They go
- * to the same message handler as wire frames, so `useExtensionMessages`
- * applies them exactly as it applies server-sent assets in the other surfaces.
+ * (characters → pets → floors → walls → carpets → furniture → layout). They
+ * never touch the runtime socket: `deliverLocal` (transport/index.ts) hands
+ * them to the office's own subscribers, so `useExtensionMessages` applies
+ * them exactly as it applies server-sent assets in the other surfaces.
  */
 
 import { rgbaToHex } from '../../core/src/assets/colorUtils.ts';
@@ -33,30 +34,23 @@ import type {
   CharacterDirectionSprites,
   PetSpriteFrames,
 } from '../../core/src/assets/types.ts';
-import type { ServerMessage } from '../../core/src/messages.ts';
 
 /**
- * The asset frames this loader produces.
- *
- * TODO(contract): these frames never cross the wire in desktop mode. They reuse
- * the upstream ServerMessage variants only because `useExtensionMessages`
- * handles those today. When the renderer↔runtime contract (core/asyncapi.yaml,
- * feat/contract-sprint0) drops the upstream asset variants, give this union its
- * own renderer-local type and keep the frames off the transport.
+ * The asset frames this loader produces: a renderer-local type, outside the
+ * wire contract. The runtime never sends assets, and these frames never cross
+ * a socket. The shapes are the ones the office's message handler reads.
+ * `deliverLocal` (transport/index.ts) hands them to that handler as the
+ * upstream `ServerMessage` variants of the same names, so a shape that drifts
+ * from those fails to compile there.
  */
-export type LocalAssetMessage = Extract<
-  ServerMessage,
-  {
-    type:
-      | 'characterSpritesLoaded'
-      | 'petSpritesLoaded'
-      | 'floorTilesLoaded'
-      | 'wallTilesLoaded'
-      | 'carpetTilesLoaded'
-      | 'furnitureAssetsLoaded'
-      | 'layoutLoaded';
-  }
->;
+export type LocalAssetMessage =
+  | { type: 'characterSpritesLoaded'; characters: CharacterDirectionSprites[] }
+  | { type: 'petSpritesLoaded'; pets: PetSpriteFrames[]; petNames: string[] }
+  | { type: 'floorTilesLoaded'; sprites: string[][][] }
+  | { type: 'wallTilesLoaded'; sets: string[][][][] }
+  | { type: 'carpetTilesLoaded'; sets: string[][][][] }
+  | { type: 'furnitureAssetsLoaded'; catalog: CatalogEntry[]; sprites: Record<string, string[][]> }
+  | { type: 'layoutLoaded'; layout: Record<string, unknown> | null };
 
 interface DecodedPets {
   pets: PetSpriteFrames[];

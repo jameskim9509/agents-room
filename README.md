@@ -54,7 +54,7 @@ npm test           # webview·server·desktop Vitest와 패키지 계약 테스�
 - VS Code 확장 디버그: `.env.example`을 `.env`로 복사한 뒤 F5 ("Run Extension"). `launch.json`이 `.env`를 읽는데 저장소에는 `.env`가 없다.
 - standalone: `node dist/cli.js`. 포트를 주지 않으면 OS가 임시 포트를 고른다. `--port 3100`, `--host 127.0.0.1`로 지정할 수 있다. 출력된 URL에는 토큰이 들어 있으므로 공유하지 않는다.
 - 렌더러만 개발: `cd webview-ui && npm run dev`. Vite dev 서버와 browser mock으로 백엔드 없이 UI를 띄운다.
-- 데스크톱 셸: `npm run desktop:start`(렌더러와 셸을 빌드해 `app://bundle`로 띄운다), `npm run desktop:dev`(Vite dev 서버와 Electron). 로컬 런타임은 `runtime/build/dev-runtime.json`이나 환경변수 `AGENTS_ROOM_RUNTIME_COMMAND`(JSON argv)로 찾는다. 처음에는 `npx install-electron --no`로 Electron 실행 파일을 받는다. 셸 e2e는 `npm run desktop:build` 뒤 `npm run e2e:desktop`이다 → [architecture.md](docs/architecture.md#데스크톱-셸).
+- 데스크톱 셸: `npm run desktop:start`(렌더러와 셸을 빌드해 `app://bundle`로 띄운다), `npm run desktop:dev`(Vite dev 서버와 Electron). 로컬 런타임은 `runtime/build/dev-runtime.json`이나 환경변수 `AGENTS_ROOM_RUNTIME_COMMAND`(JSON argv)로 찾는다. 처음에는 `npm run electron:install -w agents-room-desktop`으로 Electron 실행 파일을 받는다. 셸 e2e는 `npm run desktop:build` 뒤 `npm run e2e:desktop`이다. 실제 런타임과 붙는 spec은 `npm run runtime:build`를 먼저 해야 돌고, 하지 않으면 건너뛴다 → [architecture.md](docs/architecture.md#데스크톱-셸).
 - e2e: 빌드한 뒤 `npm run e2e`. 첫 실행 때 VS Code를 내려받는다. standalone 테스트에는 Playwright Chromium이 필요하다 (`npx playwright install chromium`).
 - 로컬 런타임: `npm install` 뒤 `npm run runtime:build`(빌드와 테스트)나 `npm run runtime:test`. JDK 17 이상이 필요하고, 빌드가 node로 계약 바인딩을 만든다 → [로컬 런타임 코드 구성](docs/architecture.md#로컬-런타임-코드-구성).
 - `npm run import-tileset`은 쓰지 않는다 (스크립트 파일이 없다).

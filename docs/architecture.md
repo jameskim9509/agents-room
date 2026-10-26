@@ -77,9 +77,17 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 
 - 렌더러 출처는 `app://bundle`이다. CSP와 스킴 권한은 ADR 0001 결정 6에 있다. CSP 헤더는 400과 404 응답에도 붙는다. 오류 응답도 렌더러 출처의 문서이기 때문이다. `npm run desktop:dev`는 Vite dev 서버(`http://localhost:5173`)를 띄우고, 이때만 그 출처를 허용하며 CSP 헤더를 붙이지 않는다.
 - preload API는 `getRuntimeEndpoint(): Promise<{url, token}>`과 `pickProjectFolder(): Promise<string | null>` 두 개뿐이다. 타입은 `core/src/desktopBridge.ts`에 있다. 접속 정보는 런타임의 준비 줄이 온 뒤에야 응답한다.
-- 렌더러는 `window.agentsRoom`이 있으면 데스크톱으로 판단한다(`webview-ui/src/runtime.ts`). `transport/index.ts`는 접속 정보를 받아 `?token=`을 붙이고 `WebSocketTransport`로 직접 접속한다. 다시 접속할 때마다 접속 정보를 새로 묻는다. 런타임을 다시 시작하면 포트와 토큰이 바뀌기 때문이다.
-- `WebSocketTransport`는 구독자가 생기기 전에 온 메시지를 순서대로 잡아 두었다가 첫 구독자에게 넘긴다. 연결 직후 오는 메시지를 잃지 않기 위해서다.
-- 렌더러는 스프라이트, 가구, 기본 레이아웃을 자기 번들에서 읽는다(`webview-ui/src/localAssets.ts`). Vite 빌드가 디코딩한 JSON(`assets/decoded/*.json`)을 함께 내보낸다. 런타임은 에셋을 보내지 않는다.
+- 렌더러는 `window.agentsRoom`이 있으면 데스크톱으로 판단한다(`webview-ui/src/runtime.ts`). `transport/desktopTransport.ts`는 접속 정보를 받아 `?token=`을 붙이고 `WebSocketTransport`로 직접 접속한다. 다시 접속할 때마다 접속 정보를 새로 묻는다. 런타임을 다시 시작하면 포트와 토큰이 바뀌기 때문이다.
+- 런타임 소켓은 계약의 agents-room 프레임만 다룬다. 받는 프레임의 타입은 `RuntimeServerMessage`, 보내는 명령의 타입은 `RuntimeClientMessage`이다. `core/src/messages.ts`가 두 union에서 `x-legacy`가 아닌 원소만 모아 생성한다 ([ADR 0005](adr/0005-agent-event-model.md) 결정 11).
+- 상속한 UI(`useExtensionMessages.ts`, Settings, 캔버스)는 업스트림 프로토콜로 말하므로 데스크톱에서는 따로 된 transport를 쓴다.
+  - 받는 것은 렌더러가 스스로 만든 에셋 프레임뿐이다. 연결 상태는 런타임 소켓의 상태를 그대로 보여준다.
+  - 상속 UI가 보내는 업스트림 명령은 런타임에 보내지 않는다. 런타임은 그 명령을 모두 `INVALID_MESSAGE`로 거절한다. `webviewReady`도 보내지 않는다. 런타임은 연결될 때마다 묻지 않아도 스냅샷을 보낸다 ([Renderer gateway](#renderer-gateway)).
+- 런타임이 보낸 프레임은 `webview-ui/src/runtimeState.ts`의 상태 저장소가 받는다. 이 저장소는 런타임 소켓을 다른 무엇보다 먼저 구독하므로 연결 직후의 스냅샷을 놓치지 않는다.
+  - 담는 값: 마지막 스냅샷, 현재 프로젝트, 에이전트 목록, 에이전트별 최근 이벤트 200개와 마지막 `seq`, 에이전트별 `connectionChecked`, 마지막 `projectOpenFailed`와 `commandRejected`. 메시지에서 빠진 값은 `null`로 담는다.
+  - 스냅샷은 앞서 담은 값을 모두 바꾼다. 스냅샷의 `lastSeq` 이하인 이벤트는 버린다. `agentsUpdated`에서 빠진 에이전트의 값은 지운다.
+  - 프레임을 기록만 하고, 상태나 현재 Tool을 계산하지 않는다. 프로젝트 패널과 Detail Panel(SCRUM-18, 19)이 이 값으로 화면을 그린다. 두 화면은 아직 없다.
+- `WebSocketTransport`는 구독자가 생기기 전에 온 메시지를 순서대로 잡아 두었다가 첫 구독자에게 넘긴다(`transport/heldMessages.ts`). 연결 직후 오는 메시지를 잃지 않기 위해서다.
+- 렌더러는 스프라이트, 가구, 기본 레이아웃을 자기 번들에서 읽는다(`webview-ui/src/localAssets.ts`). Vite 빌드가 디코딩한 JSON(`assets/decoded/*.json`)을 함께 내보낸다. 런타임은 에셋을 보내지 않는다. 이 에셋 프레임의 타입(`LocalAssetMessage`)은 계약 밖의 렌더러 전용 타입이고, 프레임은 소켓을 지나지 않는다.
 - 데스크톱에서는 레이아웃 편집("Layout")과 "+ Agent" 버튼을 숨긴다. 레이아웃 편집은 post-MVP다 (SCRUM-59). Settings에서도 VS Code나 업스트림 서버만 처리하는 항목을 숨긴다: Open Sessions Folder, Export/Import Layout, Add Asset Directory, Watch All Sessions, Instant Detection (Hooks), Display Headless as Ghosts. 런타임이 맡을 설정은 계약이 정해지면 다시 넣는다.
 
 ### 셸과 런타임의 약속
@@ -92,7 +100,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 4. 시작 실패나 예상하지 않은 종료에는 "로컬 런타임을 시작하지 못했습니다" 대화상자를 띄운다 (문구는 [ux.md](ux.md#문구-목록)). "다시 시작"은 새 토큰으로 런타임을 한 번 더 띄운다. 자동으로 다시 시작하지 않는다.
 5. 앱을 끄면 stdin을 닫고 3초 기다린 뒤, 살아 있으면 프로세스 트리를 강제로 끝낸다.
 
-e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런타임(`e2e/desktop/fixtures/fake-runtime.cjs`)으로 셸을 검증한다.
+e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런타임(`e2e/desktop/fixtures/fake-runtime.cjs`)으로 셸을 검증한다. `e2e/desktop/realRuntime.spec.ts`는 셸이 `runtime/build/dev-runtime.json`의 실제 런타임 jar를 띄우게 하고 두 쪽의 연결을 끝까지 확인한다: 준비 줄, `app://bundle`에서 토큰으로 접속, 토큰과 Origin 검사, 렌더러에 온 스냅샷, 앱을 끈 뒤 남은 java 프로세스가 없음. 이 spec은 런타임을 빌드하지 않은 로컬에서는 건너뛴다. CI(`desktop-windows` job)는 런타임을 먼저 빌드하고, 거기서 jar가 없으면 실패한다.
 
 ## 런타임 구성요소
 
@@ -173,21 +181,22 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
   - 이 잠금 아래서는 메모리 작업과 작은 파일 쓰기만 한다. 오래 걸리는 디스크 읽기는 잠금 밖에서 미리 한다.
 - 보내기 전에 어댑터에서 온 값과 진단 메시지를 마스킹 계층에 통과시킨다 ([ADR 0004](adr/0004-model-authentication.md) 결정 8, ADR 0005 결정 11).
 - 명령(목록은 ADR 0005)을 검증한다: 형식이 맞는지, 존재하는 `projectId`·`agentId`인지, 대기 중인 `permissionId`인지, 지금 상태에서 받을 수 있는지. 받지 않는 명령은 `commandRejected {reason}`으로 답하고 아무것도 바꾸지 않는다. 생성된 Java 클래스는 필수 필드를 강제하지 않으므로 이 검증을 gateway가 한다.
+- 런타임이 끝날 때는 웹 서버보다 먼저 모든 렌더러 연결을 닫고, 그 뒤에 접속한 렌더러도 바로 닫는다(`RendererGateway`가 `SmartLifecycle`이다). 웹 서버는 멈출 때 열린 연결을 제한 시간(3초)까지 기다린다. 앱을 끄는 동안에도 렌더러는 연결되어 있으므로, 연결을 먼저 닫지 않으면 런타임은 셸이 기다리는 3초 안에 끝나지 못한다.
 
 ## 셸과 런타임의 연결
 
 [ADR 0001](adr/0001-desktop-framework.md) 결정 4, 5를 구체화한 계약이다. 데스크톱 셸과 로컬 런타임이 똑같이 따른다.
 
-| 항목        | 계약                                                                                                                                                                                                                                                                                                                                                           |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 실행        | `<java> -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -jar <jar>`. stdin, stdout, stderr는 모두 pipe다. 셸은 런타임이 살아 있는 동안 stdin을 열어 둔다                                                                                                                                                                                 |
-| env         | `AGENTS_ROOM_TOKEN`: 실행마다 새로 만든 32바이트 난수(base64url). `AGENTS_ROOM_DATA_DIR`: 앱 데이터 디렉터리(절대 경로). `AGENTS_ROOM_ALLOWED_ORIGINS`: 쉼표로 구분한 Origin 목록. 토큰이 없거나 43자 base64url이 아니면, 또는 데이터 디렉터리가 없거나 절대 경로가 아니면 시작하지 않는다. 이때 stdout에는 아무것도 쓰지 않고 0이 아닌 코드로 끝난다          |
-| Origin 목록 | 배포본은 `app://bundle`이고, `desktop:dev`에서만 `http://localhost:5173`을 더한다. 변수가 없으면 `app://bundle`만 허용한다                                                                                                                                                                                                                                     |
-| 준비 줄     | 127.0.0.1의 임시 포트에 바인딩하고, 준비되면 stdout에 `AGENTS_ROOM_READY {"port":<int>}`와 `\n`을 UTF-8로 한 번 쓴다. 그 밖의 출력(로그 전부)은 stderr로 간다. 읽는 쪽은 줄 끝의 `\r`을 지운다                                                                                                                                                                 |
-| 렌더러 접속 | `ws://127.0.0.1:<port>/ws?token=<token>`. 토큰이 없거나 틀리면 업그레이드 전에 401이다(상수 시간 비교). Origin 헤더가 있는데 목록에 없으면 403이다. Origin이 없는 클라이언트(Node, curl)도 토큰은 있어야 한다                                                                                                                                                  |
-| 로그        | access log는 없다. 마스킹 계층이 토큰 값, `token=`, `*_API_KEY`·`*TOKEN*`·`*SECRET*`·`Authorization` 뒤의 값, Bearer 값, `AKIA`·`ASIA`·`sk-` 형태의 키를 가린다 ([ADR 0004](adr/0004-model-authentication.md) 결정 8). logback을 거치지 않고 stderr에 쓰는 출력(`System.out`, `System.err`)도 줄마다 같은 계층을 지난다. 잡히지 않은 예외는 logback으로 남긴다 |
-| 종료        | stdin EOF나 부모 프로세스 종료를 감지하면 Spring 컨텍스트를 닫고 끝낸다. 이때 살아 있는 자손 프로세스를 모두 죽인다. 5초 안에 끝나지 않으면 남은 자손을 죽이고 강제로 끝낸다. 셸이 살아 있으면 셸이 3초 뒤에 런타임 프로세스 트리를 먼저 끝내므로, 이 5초는 셸이 먼저 죽었을 때의 상한이다. 런타임이 코드를 실행하지 못하고 죽을 때의 정리는 아래에 있다       |
-| 개발 실행   | 런타임 빌드가 `runtime/build/dev-runtime.json`(`{"java": JDK 25의 java 경로, "jar": boot jar 경로}`)을 쓴다. 셸은 개발 중에 이 파일을 읽는다. env `AGENTS_ROOM_RUNTIME_COMMAND`(JSON 배열 argv)가 있으면 그쪽이 우선한다(테스트용, 패키징하지 않은 실행에서만)                                                                                                 |
+| 항목        | 계약                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 실행        | `<java> -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dfile.encoding=UTF-8 -jar <jar>`. stdin, stdout, stderr는 모두 pipe다. 셸은 런타임이 살아 있는 동안 stdin을 열어 둔다                                                                                                                                                                                                                                                                 |
+| env         | `AGENTS_ROOM_TOKEN`: 실행마다 새로 만든 32바이트 난수(base64url). `AGENTS_ROOM_DATA_DIR`: 앱 데이터 디렉터리(절대 경로). `AGENTS_ROOM_ALLOWED_ORIGINS`: 쉼표로 구분한 Origin 목록. 토큰이 없거나 43자 base64url이 아니면, 또는 데이터 디렉터리가 없거나 절대 경로가 아니면 시작하지 않는다. 이때 stdout에는 아무것도 쓰지 않고 0이 아닌 코드로 끝난다                                                                                          |
+| Origin 목록 | 배포본은 `app://bundle`이고, `desktop:dev`에서만 `http://localhost:5173`을 더한다. 변수가 없으면 `app://bundle`만 허용한다                                                                                                                                                                                                                                                                                                                     |
+| 준비 줄     | 127.0.0.1의 임시 포트에 바인딩하고, 준비되면 stdout에 `AGENTS_ROOM_READY {"port":<int>}`와 `\n`을 UTF-8로 한 번 쓴다. 그 밖의 출력(로그 전부)은 stderr로 간다. 읽는 쪽은 줄 끝의 `\r`을 지운다                                                                                                                                                                                                                                                 |
+| 렌더러 접속 | `ws://127.0.0.1:<port>/ws?token=<token>`. 토큰이 없거나 틀리면 업그레이드 전에 401이다(상수 시간 비교). Origin 헤더가 있는데 목록에 없으면 403이다. Origin이 없는 클라이언트(Node, curl)도 토큰은 있어야 한다                                                                                                                                                                                                                                  |
+| 로그        | access log는 없다. 마스킹 계층이 토큰 값, `token=`, `*_API_KEY`·`*TOKEN*`·`*SECRET*`·`Authorization` 뒤의 값, Bearer 값, `AKIA`·`ASIA`·`sk-` 형태의 키를 가린다 ([ADR 0004](adr/0004-model-authentication.md) 결정 8). logback을 거치지 않고 stderr에 쓰는 출력(`System.out`, `System.err`)도 줄마다 같은 계층을 지난다. 잡히지 않은 예외는 logback으로 남긴다                                                                                 |
+| 종료        | stdin EOF나 부모 프로세스 종료를 감지하면 열린 렌더러 연결을 먼저 닫고, Spring 컨텍스트를 닫고 끝낸다. 이때 살아 있는 자손 프로세스를 모두 죽인다. 렌더러가 연결되어 있어도 셸이 기다리는 3초 안에 끝난다. 5초 안에 끝나지 않으면 남은 자손을 죽이고 강제로 끝낸다. 셸이 살아 있으면 셸이 3초 뒤에 런타임 프로세스 트리를 먼저 끝내므로, 이 5초는 셸이 먼저 죽었을 때의 상한이다. 런타임이 코드를 실행하지 못하고 죽을 때의 정리는 아래에 있다 |
+| 개발 실행   | 런타임 빌드가 `runtime/build/dev-runtime.json`(`{"java": JDK 25의 java 경로, "jar": boot jar 경로}`)을 쓴다. 셸은 개발 중에 이 파일을 읽는다. env `AGENTS_ROOM_RUNTIME_COMMAND`(JSON 배열 argv)가 있으면 그쪽이 우선한다(테스트용, 패키징하지 않은 실행에서만)                                                                                                                                                                                 |
 
 - 자식 프로세스 정리를 보장하는 범위는 OS마다 다르다.
   - Windows: 런타임은 시작할 때 자기만 가진 job object(`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)에 들어간다. 그 뒤에 생기는 자식은 누가 띄우든(ACP SDK 포함) 이 job 안에서 생기고, 그 자손도 그렇다. 런타임이 어떻게 끝나든 Windows가 이 job의 프로세스를 모두 죽인다. 부모가 먼저 끝난 손자도 포함된다.

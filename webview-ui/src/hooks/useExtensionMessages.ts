@@ -738,6 +738,8 @@ export function useExtensionMessages(
       }
     };
     const unsubscribe = transport.onMessage(handler);
+    // The desktop shell's office transport drops it: the local runtime sends
+    // its snapshot on every connect without being asked (transport/index.ts).
     transport.send({ type: 'webviewReady' });
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps

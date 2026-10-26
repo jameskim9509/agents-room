@@ -34,6 +34,10 @@ The `npx pixel-agents` CLI path: hook-driven lifecycle propagates from the local
 
 The agents-room Electron shell (`desktop/`) serving the built renderer at `app://bundle`, against a fake local runtime. Covers: the office renders from the renderer's own assets and the renderer joins the runtime WebSocket with the per-launch token; a refused handshake leaves the renderer reconnecting; the folder picker returns `null` on cancel and the path on pick; no new windows or navigation away from `app://bundle`; every `app://bundle` response, 404 and 400 included, carries the CSP, so a missing path cannot be framed; the desktop Settings modal hides the entries only VS Code or the upstream server answer; the runtime failure dialog for a missing ready line (the shell kills that runtime) and for an exit before ready ("다시 시작" starts exactly one new runtime, "종료" quits); quitting ends the runtime, and kills a runtime that ignores stdin EOF together with its child process; a shell that ends abruptly leaves the runtime alive long enough to end its child on stdin EOF.
 
+### Desktop shell with the local runtime (`@area:desktop-runtime`)
+
+The built shell against the real local runtime: the boot jar `runtime/build/dev-runtime.json` names, launched by the shell exactly as in development, with nothing faked on either side. This is the end-to-end check of the shell↔runtime handshake (`docs/architecture.md`, "셸과 런타임의 연결"). Covers: the ready line; the renderer joining from `app://bundle` with the per-launch token, while the runtime refuses a missing or wrong token (401) and a foreign Origin (403); the runtime's connect-time snapshot reaching the renderer's runtime state, with no upstream command sent to the runtime; quitting the app ends the runtime on stdin EOF within the shell's 3 s grace, a connected renderer included, and leaves no java process; a shell that ends abruptly leaves no java process either. Needs `npm run runtime:build`: without its output the specs skip locally and fail in CI.
+
 ### Pet system (`@area:pets`)
 
 The animated pets feature, which has no hook dependency. Pet sprites load and the `petSpritesLoaded` broadcast arrives with manifest display names; placing a pet from the Pets-tab carousel toggles it on/off and persists across a panel reload via `~/.pixel-agents/layout.json`; clicking a pet shows a heart bubble that auto-dismisses and dismisses again on re-click. Pets render only on the canvas, so live state is read through the `getPets` / `petClick` e2e test hooks. FSM internals, pathfinding, FOLLOW, z-sort, and legacy-layout migration are covered by webview unit tests, not e2e.
@@ -98,6 +102,7 @@ npm run e2e -- --grep "@area:cross-cutting"
 npm run e2e -- --headed                      # watch chromium for standalone test
 
 npm run desktop:build && npm run e2e:desktop   # desktop shell suite (e2e/desktop, no VS Code download)
+npm run runtime:build                          # once, so the real-runtime desktop specs run instead of skipping
 
 npm run e2e:inventory                        # regenerate the inventory section below (both configs)
 npm run test:report                          # build the Allure dashboard from latest run
@@ -113,7 +118,7 @@ Rules for a correct test:
 - **Drive behavior through a scenario, not by hand.** Define timed actions with the `claudeScenario(...)` builder and let the mock perform them. Don't hand-write transcript files or hand-fire hooks inside a terminal-driven test body.
 - **Transcripts are append-only.** Existing JSONL lines are never mutated in place; new records appear later in the stream. Scenarios model this with timed `.appendJsonl(...)` steps.
 - **Assert only on Playwright-visible outcomes** — agent overlays, character state, sound hooks — never on the mock's internals. The mock never decides pass/fail.
-- **Desktop shell tests mock the local runtime at its process boundary.** `e2e/desktop/fixtures/fake-runtime.cjs` speaks only the shell↔runtime handshake (env token, the `AGENTS_ROOM_READY {"port":N}` stdout line, a token- and Origin-gated `/ws`, exit on stdin EOF) and is passed to the shell through `AGENTS_ROOM_RUNTIME_COMMAND`. Its flags pick a behavior (silent, exit before ready, refuse the handshake, ignore stdin EOF, start a child process); the assertions read the window, the shell's `runtime.log` and the OS process table, never the fake's internals. How many runtimes the shell started, and their PIDs, come from the shell's own `[shell] the runtime started (pid N)` lines. The fake's state file is read only to find its child process in the OS process table and to clean up. To end the shell abruptly, kill the PID the Electron main process reports (`app.evaluate(() => process.pid)`): the process Playwright spawned is a launcher, not the main process. It is for shell-level tests only: agent behavior is tested through the real runtime with a mock ACP agent. Native dialogs are stubbed in the main process with `app.evaluate`, because Playwright cannot drive OS dialogs.
+- **Desktop shell tests mock the local runtime at its process boundary.** `e2e/desktop/fixtures/fake-runtime.cjs` speaks only the shell↔runtime handshake (env token, the `AGENTS_ROOM_READY {"port":N}` stdout line, a token- and Origin-gated `/ws`, exit on stdin EOF) and is passed to the shell through `AGENTS_ROOM_RUNTIME_COMMAND`. Its flags pick a behavior (silent, exit before ready, refuse the handshake, ignore stdin EOF, start a child process); the assertions read the window, the shell's `runtime.log` and the OS process table, never the fake's internals. How many runtimes the shell started, and their PIDs, come from the shell's own `[shell] the runtime started (pid N)` lines. The fake's state file is read only to find its child process in the OS process table and to clean up. To end the shell abruptly, kill the PID the Electron main process reports (`app.evaluate(() => process.pid)`): the process Playwright spawned is a launcher, not the main process. It is for shell-level tests only: agent behavior is tested through the real runtime with a mock ACP agent. `realRuntime.spec.ts` runs the real runtime jar instead, through the shell's own dev descriptor lookup (no `AGENTS_ROOM_RUNTIME_COMMAND`); it asserts on the window, the renderer's `getRuntimeState` test hook (enabled by setting `__PIXEL_AGENTS_E2E` and reloading, which also opens a fresh runtime connection), `runtime.log`, the runtime's answers to `/ws` handshakes from the test process, and the java processes running the jar in the OS process table. Native dialogs are stubbed in the main process with `app.evaluate`, because Playwright cannot drive OS dialogs.
 - **Standalone is the one exception.** `standalone/hooks.spec.ts` has no VS Code terminal to host a mocked `claude`, so it POSTs to the server's hook endpoint directly via `sendHookEvent`. That is correct _only_ for the standalone-server path; every terminal-driven test must use the scenario builder.
 
 ## What to read before adding a test
@@ -180,7 +185,7 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 
 <!-- BEGIN:E2E-INVENTORY -->
 
-102 tests total. Generated by `scripts/generate-e2e-inventory.mjs`. Re-run after adding or removing tests.
+104 tests total. Generated by `scripts/generate-e2e-inventory.mjs`. Re-run after adding or removing tests.
 
 ### `@area:spawn` (2 tests)
 
@@ -293,6 +298,11 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 - `e2e/claude/hooks-off/carpet.spec.ts:180` — a carpet stroke is a single undo entry (Carpet)
 - `e2e/claude/hooks-off/carpet.spec.ts:201` — carpet tiles persist across a save + panel reload (Carpet)
 - `e2e/claude/hooks-off/carpet.spec.ts:297` — a seeded carpet coexists with furniture on the same tile (Carpet surface placement (seeded))
+
+### `@area:desktop-runtime` (2 tests)
+
+- `e2e/desktop/realRuntime.spec.ts:53` — the shell and the runtime complete the handshake, the renderer gets the snapshot, and quitting leaves no java process (Desktop shell with the real local runtime)
+- `e2e/desktop/realRuntime.spec.ts:110` — a shell that ends abruptly leaves no java process: the runtime notices and exits by itself (Desktop shell with the real local runtime)
 
 ### `@area:desktop-shell` (11 tests)
 

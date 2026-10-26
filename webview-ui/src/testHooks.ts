@@ -2,6 +2,8 @@ import type { ColorValue } from './components/ui/types.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { isGhostHeadlessAgentsEnabled } from './office/engine/renderer.js';
 import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
+import type { RuntimeState } from './runtimeState.js';
+import { runtimeStateStore } from './transport/index.js';
 
 declare global {
   interface Window {
@@ -87,6 +89,8 @@ declare global {
         parentToolId?: string;
       }>;
       selectAgent?: (id: number) => void;
+      /** Desktop shell: what the renderer holds from the local runtime's frames. `null` elsewhere. */
+      getRuntimeState?: () => RuntimeState | null;
     };
   }
 }
@@ -109,6 +113,8 @@ declare global {
  *   button deterministically instead of pixel-hunting the sprite on the canvas
  *   (see closeAgentFromOverlay in e2e/helpers/office.ts). ToolOverlay reads
  *   selectedAgentId every rAF, so the × button surfaces on the next frame.
+ * - getRuntimeState(): desktop shell only, what the renderer holds from the
+ *   local runtime's frames (runtimeState.ts); `null` in the other surfaces.
  */
 export function installTestHooks(officeStateRef: { current: OfficeState | null }): void {
   if (typeof window === 'undefined') return;
@@ -135,6 +141,10 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
   // The ghost setting lives in the renderer module (read every rAF frame), not
   // in OfficeState, so e2e reads it from there to assert what is actually drawn.
   hooks.getGhostHeadlessAgents = () => isGhostHeadlessAgentsEnabled();
+
+  // Desktop shell: the runtime state store's current state (snapshot, project,
+  // agents, command results). Read-only, like getCharacters().
+  hooks.getRuntimeState = () => runtimeStateStore?.getState() ?? null;
 
   hooks.selectAgent = (id) => {
     const os = officeStateRef.current;

@@ -9,8 +9,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -29,8 +29,13 @@ import reactor.core.scheduler.Schedulers;
  * change's frames, or it does not, and then it gets all of them, after the snapshot.
  *
  * <p>Connections reach this handler only through {@link RendererConnectionGate} (token and Origin).
+ *
+ * <p>On shutdown it closes every renderer connection before the web server stops (a
+ * {@link SmartLifecycle} in the default phase stops before the server's). The server's stop waits for
+ * open connections until its timeout, so a connected renderer, which the desktop app always has
+ * while it quits, would otherwise hold the exit after stdin EOF past the shell's 3 s grace.
  */
-public final class RendererGateway implements WebSocketHandler, DisposableBean {
+public final class RendererGateway implements WebSocketHandler, SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(RendererGateway.class);
 
@@ -40,6 +45,8 @@ public final class RendererGateway implements WebSocketHandler, DisposableBean {
 
     /** Orders snapshots against state changes. Held only for in-memory work and small file writes. */
     private final Object publishLock = new Object();
+
+    private volatile boolean running;
 
     /**
      * @param frameHandler looked up lazily: command handling depends on the gateway for broadcasts
@@ -65,7 +72,9 @@ public final class RendererGateway implements WebSocketHandler, DisposableBean {
                 .doOnNext(event -> dispatch(connection, event))
                 .then();
 
-        return Mono.zip(inbound, outbound).then().doFinally(signal -> {
+        // Either side ending ends the session: the renderer closing it, or the runtime completing the
+        // connection (shutdown, a failed snapshot). Returning closes the WebSocket.
+        return Mono.firstWithSignal(inbound, outbound).doFinally(signal -> {
             // Close first: a connect step still running then sees it and leaves the connection out.
             connection.complete();
             if (connections.remove(connection.id()) != null) {
@@ -101,10 +110,23 @@ public final class RendererGateway implements WebSocketHandler, DisposableBean {
         return connections.size();
     }
 
-    /** Closes every renderer connection on shutdown. */
     @Override
-    public void destroy() {
-        connections.values().forEach(RendererConnection::complete);
+    public void start() {
+        running = true;
+    }
+
+    /** First step of the shutdown: closes every renderer connection, and any that connects later. */
+    @Override
+    public void stop() {
+        synchronized (publishLock) {
+            running = false;
+            connections.values().forEach(RendererConnection::complete);
+        }
+    }
+
+    @Override
+    public boolean isRunning() {
+        return running;
     }
 
     private void dispatch(RendererConnection connection, Optional<String> event) {
@@ -131,6 +153,11 @@ public final class RendererGateway implements WebSocketHandler, DisposableBean {
     /** Queues the snapshot and joins the broadcast set in one step (D4). */
     private void connect(RendererConnection connection, FrameHandler handler) {
         synchronized (publishLock) {
+            if (!running) {
+                // The runtime is stopping; the renderer reconnects to the next one.
+                connection.complete();
+                return;
+            }
             try {
                 handler.onConnect(connection);
             } catch (RuntimeException e) {

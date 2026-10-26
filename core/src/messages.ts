@@ -47,6 +47,16 @@ export type ServerMessage =
   | CommandRejected
   | AgentEventMessage;
 
+/** The agents-room members of `ServerMessage` (no `x-legacy`). */
+export type RuntimeServerMessage =
+  | Snapshot
+  | ProjectOpened
+  | ProjectOpenFailed
+  | AgentsUpdated
+  | ConnectionChecked
+  | CommandRejected
+  | AgentEventMessage;
+
 export type ClientMessage =
   | WebviewReady
   | LaunchAgent
@@ -70,6 +80,18 @@ export type ClientMessage =
   | SaveAreaMappings
   | SetShowAreas
   | RequestDiagnostics
+  | OpenProject
+  | RelocateProject
+  | SaveAgentConfig
+  | CheckConnection
+  | StartAgent
+  | StopAgent
+  | SendPrompt
+  | CancelRun
+  | RespondPermission;
+
+/** The agents-room members of `ClientMessage` (no `x-legacy`). */
+export type RuntimeClientMessage =
   | OpenProject
   | RelocateProject
   | SaveAgentConfig

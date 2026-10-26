@@ -5,7 +5,7 @@ import {
   TRANSPORT_STATE_RECONNECTING,
 } from '../../../core/src/constants.js';
 import type { ClientMessage, ServerMessage } from '../../../core/src/messages.js';
-import { TRANSPORT_INBOUND_BUFFER_MAX } from '../constants.js';
+import { HeldMessages } from './heldMessages.js';
 import type { MessageTransport, TransportState } from './types.js';
 
 /**
@@ -21,15 +21,20 @@ export type WebSocketEndpoint = string | (() => Promise<string>);
  * WebSocket transport for standalone browser mode and the desktop shell.
  * Includes automatic reconnection with exponential backoff and message queuing.
  *
+ * `In` and `Out` are the frames it receives and sends: the whole protocol in
+ * standalone, the agents-room frames on the desktop runtime socket. Frames are
+ * parsed, not validated: the type says what the peer is contracted to send.
+ *
  * Inbound frames that arrive while nobody is subscribed are held, in order,
- * and handed to the first subscriber instead of being dropped. The transport is
- * created at module import, before React mounts, so a frame the server sends
- * right after the handshake (the desktop runtime's connect-time snapshot) or a
- * locally delivered asset frame would otherwise be lost.
+ * and handed to the first subscriber instead of being dropped (HeldMessages),
+ * so the desktop runtime's connect-time snapshot survives the gap before
+ * React mounts.
  */
-export class WebSocketTransport implements MessageTransport {
+export class WebSocketTransport<
+  In = ServerMessage,
+  Out = ClientMessage,
+> implements MessageTransport<In, Out> {
   private ws: WebSocket | null = null;
-  private handlers: Array<(msg: ServerMessage) => void> = [];
   private stateHandlers: Array<(state: TransportState) => void> = [];
   private readonly endpoint: WebSocketEndpoint;
   /** Bumped on every connect() so a late endpoint resolution can't open a stale socket. */
@@ -37,11 +42,8 @@ export class WebSocketTransport implements MessageTransport {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
-  private pendingMessages: ClientMessage[] = [];
-  /** Inbound frames held until a subscriber exists (and until older held frames are out). */
-  private inbound: ServerMessage[] = [];
-  private flushScheduled = false;
-  private flushing = false;
+  private pendingMessages: Out[] = [];
+  private readonly inbound = new HeldMessages<In>();
   private _state: TransportState = TRANSPORT_STATE_CONNECTING;
   private readonly _ready: Promise<void>;
   private resolveReady!: () => void;
@@ -110,13 +112,13 @@ export class WebSocketTransport implements MessageTransport {
     };
 
     this.ws.onmessage = (e: MessageEvent) => {
-      let msg: ServerMessage;
+      let msg: In;
       try {
-        msg = JSON.parse(e.data as string) as ServerMessage;
+        msg = JSON.parse(e.data as string) as In;
       } catch {
         return; // Malformed JSON, ignore
       }
-      this.dispatch(msg);
+      this.inbound.dispatch(msg);
     };
 
     this.ws.onclose = () => {
@@ -131,7 +133,7 @@ export class WebSocketTransport implements MessageTransport {
     };
   }
 
-  send(message: ClientMessage): void {
+  send(message: Out): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     } else {
@@ -140,22 +142,17 @@ export class WebSocketTransport implements MessageTransport {
     }
   }
 
-  onMessage(handler: (message: ServerMessage) => void): () => void {
-    this.handlers.push(handler);
-    this.scheduleFlush();
-    return () => {
-      this.handlers = this.handlers.filter((h) => h !== handler);
-    };
+  onMessage(handler: (message: In) => void): () => void {
+    return this.inbound.subscribe(handler);
   }
 
   /**
    * Deliver an externally-sourced message to all handlers, as if it had arrived
    * over the socket. Used in Vite dev mode to bridge `browserMock`'s injected
-   * `window` messages, and in the desktop shell for the renderer's own bundled
-   * assets (localAssets.ts). Held like a socket frame while nobody subscribes.
+   * `window` messages. Held like a socket frame while nobody subscribes.
    */
-  deliver(message: ServerMessage): void {
-    this.dispatch(message);
+  deliver(message: In): void {
+    this.inbound.dispatch(message);
   }
 
   onStateChange(handler: (state: TransportState) => void): () => void {
@@ -173,56 +170,10 @@ export class WebSocketTransport implements MessageTransport {
     }
     this.ws?.close();
     this.ws = null;
-    this.handlers = [];
+    this.inbound.clear();
     this.pendingMessages = [];
-    this.inbound = [];
     this.setState(TRANSPORT_STATE_DISCONNECTED);
     this.stateHandlers = [];
-  }
-
-  /** Hand a frame to the subscribers, or hold it so ordering survives a missing subscriber. */
-  private dispatch(message: ServerMessage): void {
-    if (this.handlers.length === 0 || this.inbound.length > 0 || this.flushing) {
-      this.inbound.push(message);
-      if (this.inbound.length > TRANSPORT_INBOUND_BUFFER_MAX) {
-        this.inbound.shift();
-        console.warn('[Transport] Inbound buffer full, dropped the oldest held message');
-      }
-      this.scheduleFlush();
-      return;
-    }
-    this.notify(message);
-  }
-
-  /**
-   * Flush on a microtask, not inside onMessage: React StrictMode subscribes,
-   * unsubscribes and subscribes again in one commit, and the held frames must
-   * reach the subscriber that stays.
-   */
-  private scheduleFlush(): void {
-    if (this.flushScheduled || this.handlers.length === 0 || this.inbound.length === 0) return;
-    this.flushScheduled = true;
-    queueMicrotask(() => {
-      this.flushScheduled = false;
-      this.flushing = true;
-      try {
-        while (this.inbound.length > 0 && this.handlers.length > 0) {
-          this.notify(this.inbound.shift()!);
-        }
-      } finally {
-        this.flushing = false;
-      }
-    });
-  }
-
-  private notify(message: ServerMessage): void {
-    for (const handler of [...this.handlers]) {
-      try {
-        handler(message);
-      } catch (err) {
-        console.error('[Transport] Message handler failed', err);
-      }
-    }
   }
 
   private scheduleReconnect(): void {

@@ -1,6 +1,7 @@
 /**
  * WebSocketTransport: the inbound buffer that holds frames until the first
- * subscriber (desktop connect-time frames, renderer-local asset frames), and
+ * subscriber (the desktop runtime's connect-time snapshot, frames delivered
+ * by hand), and
  * the endpoint function the desktop shell resolves before every connect.
  * A fake WebSocket stands in for the browser's.
  */

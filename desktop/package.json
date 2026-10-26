@@ -8,6 +8,7 @@
   "scripts": {
     "build": "node esbuild.mjs",
     "check-types": "tsc --noEmit -p tsconfig.json",
+    "electron:install": "install-electron",
     "start": "electron .",
     "dev": "node scripts/dev.mjs",
     "test": "vitest run"
