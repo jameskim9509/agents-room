@@ -2,6 +2,7 @@ package agentsroom.runtime.gateway;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import agentsroom.contract.AgentSnapshot;
 import agentsroom.contract.AgentSummary;
 import agentsroom.contract.Readiness;
 import agentsroom.contract.RejectReason;
@@ -11,6 +12,7 @@ import agentsroom.runtime.persistence.RecentProject;
 import agentsroom.runtime.project.FileEntry;
 import agentsroom.runtime.project.ProjectErrorCode;
 import agentsroom.runtime.project.ProjectInfo;
+import agentsroom.runtime.session.AgentSummaries;
 import agentsroom.runtime.testsupport.ContractSchema;
 import agentsroom.runtime.testsupport.ContractSchema.Verdict;
 import agentsroom.runtime.workspace.WorkspaceSnapshot;
@@ -42,10 +44,10 @@ class RendererFramesTests {
                 agent("gemini-cli", "google", "oauth", null, 2, 0));
 
         List<ServerMessage> frames = new ArrayList<>();
-        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(null, List.of(), null, List.of())));
-        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(null, recent, null, List.of())));
-        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(PROJECT_ID, recent, project, agents)));
-        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(PROJECT_ID, recent, empty, List.of())));
+        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(null, List.of(), null, List.of()), RendererFramesTests::offline));
+        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(null, recent, null, List.of()), RendererFramesTests::offline));
+        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(PROJECT_ID, recent, project, agents), RendererFramesTests::offline));
+        frames.add(RendererFrames.snapshot(new WorkspaceSnapshot(PROJECT_ID, recent, empty, List.of()), RendererFramesTests::offline));
         frames.add(RendererFrames.projectOpened(project));
         frames.add(RendererFrames.projectOpened(empty));
         for (ProjectErrorCode code : ProjectErrorCode.values()) {
@@ -53,7 +55,9 @@ class RendererFramesTests {
         }
         frames.add(RendererFrames.projectOpenFailed(null, ProjectErrorCode.PATH_NOT_ABSOLUTE, "Path is empty"));
         frames.add(RendererFrames.agentsUpdated(List.of()));
-        frames.add(RendererFrames.agentsUpdated(agents));
+        for (Readiness readiness : Readiness.values()) {
+            frames.add(RendererFrames.agentsUpdated(agents.stream().map(agent -> AgentSummaries.summary(agent, readiness)).toList()));
+        }
         for (RejectReason reason : RejectReason.values()) {
             frames.add(RendererFrames.commandRejected(CommandEcho.of("startAgent"), reason, "Rejected"));
         }
@@ -74,26 +78,22 @@ class RendererFramesTests {
     }
 
     @Test
-    void readinessAndReportsComeFromTheHarnessCatalog() {
+    void reportsComeFromTheHarnessCatalog() {
         AgentSummary codex = summary(AgentConfig.seededCodex(PROJECT_ID));
-        // configured needs an adapter install the runtime found (D9), and it cannot launch one yet.
-        assertThat(codex.getReadiness()).as("no adapter launch yet").isEqualTo(Readiness.EXECUTABLE_MISSING);
         assertThat(codex.getReportsToolDetails()).as("D21").isTrue();
         assertThat(codex.getReportsSubagentSessions()).as("D22").isFalse();
 
         AgentSummary codexOnBedrock = summary(agent("codex", "amazon-bedrock", "aws-profile", null, 0, 0));
-        assertThat(codexOnBedrock.getReadiness()).as("not verified yet (ADR 0004)").isEqualTo(Readiness.UNSUPPORTED);
         assertThat(codexOnBedrock.getReportsToolDetails()).isTrue();
 
         AgentSummary unknown = summary(agent("gemini-cli", "google", "oauth", null, 0, 0));
-        assertThat(unknown.getReadiness()).isEqualTo(Readiness.UNSUPPORTED);
         assertThat(unknown.getReportsToolDetails()).isFalse();
         assertThat(unknown.getReportsSubagentSessions()).isFalse();
     }
 
     @Test
     void omitsOptionalFieldsAndKeepsRequiredNulls() {
-        String snapshot = codec.encode(RendererFrames.snapshot(new WorkspaceSnapshot(null, List.of(), null, List.of())));
+        String snapshot = codec.encode(RendererFrames.snapshot(new WorkspaceSnapshot(null, List.of(), null, List.of()), RendererFramesTests::offline));
         assertThat(snapshot).isEqualTo("{\"type\":\"snapshot\",\"currentProjectId\":null,\"recentProjects\":[],\"agents\":[]}");
 
         String rejected = codec.encode(RendererFrames.commandRejected(CommandEcho.agent("stopAgent", "a1"),
@@ -117,7 +117,11 @@ class RendererFramesTests {
     }
 
     private static AgentSummary summary(AgentConfig agent) {
-        return RendererFrames.agentsUpdated(List.of(agent)).getAgents().getFirst();
+        return AgentSummaries.summary(agent, Readiness.CONFIGURED);
+    }
+
+    private static AgentSnapshot offline(AgentConfig agent) {
+        return AgentSummaries.offline(summary(agent));
     }
 
     private static AgentConfig agent(

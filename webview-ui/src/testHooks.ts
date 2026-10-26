@@ -1,9 +1,10 @@
+import type { RuntimeClientMessage } from '../../core/src/messages.js';
 import type { ColorValue } from './components/ui/types.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { isGhostHeadlessAgentsEnabled } from './office/engine/renderer.js';
 import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
 import type { RuntimeState } from './runtimeState.js';
-import { runtimeStateStore } from './transport/index.js';
+import { runtimeStateStore, sendRuntimeCommand } from './transport/index.js';
 
 declare global {
   interface Window {
@@ -91,14 +92,19 @@ declare global {
       selectAgent?: (id: number) => void;
       /** Desktop shell: what the renderer holds from the local runtime's frames. `null` elsewhere. */
       getRuntimeState?: () => RuntimeState | null;
+      /**
+       * Desktop shell: sends a command to the local runtime over the renderer's
+       * own runtime socket, as the panels will. `false` elsewhere (nothing sent).
+       */
+      sendRuntimeCommand?: (command: RuntimeClientMessage) => boolean;
     };
   }
 }
 
 /**
  * Install e2e test observables on window.__pixelAgentsTestHooks. Mostly
- * read-only / append-only; the one action (selectAgent) only sets selection
- * state and changes no production logic. Called once at module-load from
+ * read-only / append-only; the actions (selectAgent, sendRuntimeCommand) only
+ * set selection state or send what a panel would, and change no production logic. Called once at module-load from
  * App.tsx with the singleton officeStateRef.
  *
  * - getCharacters(): point-in-time snapshot of every character's matrix, team, and bubble state.
@@ -115,6 +121,10 @@ declare global {
  *   selectedAgentId every rAF, so the × button surfaces on the next frame.
  * - getRuntimeState(): desktop shell only, what the renderer holds from the
  *   local runtime's frames (runtimeState.ts); `null` in the other surfaces.
+ * - sendRuntimeCommand(command): desktop shell only, sends a runtime command
+ *   (openProject, startAgent, sendPrompt, ...) on the renderer's runtime socket,
+ *   so its answers (including the sender-only ones, such as commandRejected)
+ *   land in getRuntimeState(). The project and agent panels come later.
  */
 export function installTestHooks(officeStateRef: { current: OfficeState | null }): void {
   if (typeof window === 'undefined') return;
@@ -145,6 +155,7 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
   // Desktop shell: the runtime state store's current state (snapshot, project,
   // agents, command results). Read-only, like getCharacters().
   hooks.getRuntimeState = () => runtimeStateStore?.getState() ?? null;
+  hooks.sendRuntimeCommand = (command) => sendRuntimeCommand(command);
 
   hooks.selectAgent = (id) => {
     const os = officeStateRef.current;

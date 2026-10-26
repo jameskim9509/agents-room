@@ -115,6 +115,9 @@ async function onReady(): Promise<void> {
     log,
     dataDir: userData,
     allowedOrigins: rendererOrigins,
+    // Electron is the adapters' Node, in development as in an installed app.
+    adapterNode: process.execPath,
+    packaged: app.isPackaged,
     readyTimeoutMs: resolveReadyTimeoutMs(),
     resolveCommand: () =>
       resolveRuntimeCommand(devOverrides.values[ENV_RUNTIME_COMMAND], descriptorPath),

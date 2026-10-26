@@ -63,6 +63,17 @@ export const ENV_RUNTIME_TOKEN = 'AGENTS_ROOM_TOKEN';
 export const ENV_RUNTIME_DATA_DIR = 'AGENTS_ROOM_DATA_DIR';
 /** Shell → runtime: comma-separated Origin allowlist for `/ws`. */
 export const ENV_RUNTIME_ALLOWED_ORIGINS = 'AGENTS_ROOM_ALLOWED_ORIGINS';
+/**
+ * Shell → runtime: the absolute path of the executable that runs the ACP
+ * adapters as Node. Always the shell's own executable (`process.execPath`),
+ * packaged or not (ADR 0003 decision 12): users need no Node install.
+ */
+export const ENV_RUNTIME_NODE = 'AGENTS_ROOM_NODE';
+/**
+ * Shell → runtime: `1` says that `AGENTS_ROOM_NODE` is Electron, so the
+ * runtime starts it with `ELECTRON_RUN_AS_NODE=1` in the adapter's env.
+ */
+export const ENV_RUNTIME_NODE_ELECTRON = 'AGENTS_ROOM_NODE_ELECTRON';
 /** Override (tests, debugging): JSON array argv used to launch the runtime. Wins over the dev descriptor. */
 export const ENV_RUNTIME_COMMAND = 'AGENTS_ROOM_RUNTIME_COMMAND';
 /** Override (tests): ready-line timeout in ms. */
@@ -83,6 +94,15 @@ export const DEV_ONLY_ENV = [
   ENV_USER_DATA_DIR,
   ENV_RENDERER_URL,
 ] as const;
+/**
+ * The runtime's own test and development knobs for the ACP adapters (ADR 0003
+ * decision 8): `AGENTS_ROOM_HARNESS_<ID>_COMMAND` (any argv as an agent's
+ * adapter) and `AGENTS_ROOM_ADAPTERS_DIR`. A packaged app does not pass them
+ * on, for the same reason as `DEV_ONLY_ENV` (ADR 0001 decision 5). Matched in
+ * any case, as Windows env names are. `AGENTS_ROOM_E2E` still passes: it can
+ * only stop the runtime from starting adapters.
+ */
+export const RUNTIME_DEV_ONLY_ENV = /^(AGENTS_ROOM_HARNESS_.+_COMMAND|AGENTS_ROOM_ADAPTERS_DIR)$/i;
 
 // ── Runtime launch and supervision (ADR 0001 decisions 3 and 5) ──────────────
 

@@ -3,10 +3,14 @@
  * dist/webview) through Playwright's `_electron`, against the fake runtime
  * (e2e/desktop/fixtures/fake-runtime.cjs) passed in AGENTS_ROOM_RUNTIME_COMMAND,
  * or against the real runtime the shell finds through runtime/build/dev-runtime.json.
+ * A real runtime can run its seeded Codex agent on the mock ACP agent
+ * (e2e/desktop/fixtures/mock-acp-agent.cjs, `mockAgent`).
  *
- * Every launch gets its own HOME/USERPROFILE/APPDATA/LOCALAPPDATA and its own
- * Electron userData, so the single-instance lock, runtime.log and the
- * runtime's data dir never touch a developer's real profile.
+ * Every launch gets its own HOME/USERPROFILE/APPDATA/LOCALAPPDATA, CODEX_HOME
+ * and Electron userData, so the single-instance lock, runtime.log and the
+ * runtime's data dir never touch a developer's real profile. Every launch sets
+ * AGENTS_ROOM_E2E=1: the runtime then never starts the installed codex-acp,
+ * only the adapter command a test passes (fail closed).
  */
 import {
   _electron as electron,
@@ -18,9 +22,13 @@ import { type ChildProcess, execFileSync } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import http from 'http';
+import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
 
+import type { AgentEvent, RuntimeClientMessage } from '../../../core/src/messages.js' with {
+  'resolution-mode': 'import',
+};
 import type { RuntimeState } from '../../../webview-ui/src/runtimeState.js' with {
   'resolution-mode': 'import',
 };
@@ -30,9 +38,33 @@ const DESKTOP_DIR = path.join(REPO_ROOT, 'desktop');
 /** Written by `npm run runtime:build` or `runtime:assemble`; the unpackaged shell launches the runtime it names. */
 export const DEV_RUNTIME_DESCRIPTOR = path.join(REPO_ROOT, 'runtime', 'build', 'dev-runtime.json');
 const FAKE_RUNTIME = path.join(__dirname, '..', 'fixtures', 'fake-runtime.cjs');
+const MOCK_ACP_AGENT = path.join(__dirname, '..', 'fixtures', 'mock-acp-agent.cjs');
 const IS_WINDOWS = process.platform === 'win32';
 /** One `<pid> <command line>` row per java.exe process. */
 const WINDOWS_JAVA_PROCESSES = `Get-CimInstance Win32_Process -Filter "Name='java.exe'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`;
+/** One `<pid> <command line>` row per process. */
+const WINDOWS_PROCESSES = `Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`;
+/**
+ * The runtime's adapter knobs: set per launch, never inherited from a
+ * developer's shell. Every harness's command override
+ * (`AGENTS_ROOM_HARNESS_<ID>_COMMAND`), `AGENTS_ROOM_NODE*`, the e2e switch,
+ * the adapters folder and the Codex home, in any case (Windows env names are
+ * case-insensitive).
+ */
+const INHERITED_ADAPTER_ENV =
+  /^(AGENTS_ROOM_HARNESS_.+_COMMAND|AGENTS_ROOM_NODE.*|AGENTS_ROOM_E2E|AGENTS_ROOM_ADAPTERS_DIR|CODEX_HOME)$/i;
+
+/**
+ * The Electron executable Playwright launches: the `electron` package exports
+ * its path. In the shell's main process this is `process.execPath`, which the
+ * shell hands the runtime as the adapters' Node (AGENTS_ROOM_NODE).
+ */
+export function electronExecutable(): string {
+  return createRequire(path.join(DESKTOP_DIR, 'package.json'))('electron') as string;
+}
+
+/** A mock ACP agent scenario: the keys in mock-acp-agent.cjs (`extends` starts from a built-in one). */
+export type MockAgentScenario = Record<string, unknown>;
 
 /** How the fake runtime behaves for one launch. See the flag list in fake-runtime.cjs. */
 export interface FakeRuntimeOptions {
@@ -54,6 +86,14 @@ export interface LaunchDesktopOptions {
   realRuntime?: boolean;
   /** AGENTS_ROOM_READY_TIMEOUT_MS; the shell's default is 30 s. */
   readyTimeoutMs?: number;
+  /**
+   * With `realRuntime`: the runtime starts its Codex adapter as the mock ACP
+   * agent playing this scenario, written to `<tmpBase>/mock-acp-scenario.json`.
+   * The command, in AGENTS_ROOM_HARNESS_CODEX_COMMAND, is
+   * `[<electron>, mock-acp-agent.cjs, --scenario-file, <file>]`: Electron is the
+   * shell's own executable, so the runtime runs it as Node, as it would codex-acp.
+   */
+  mockAgent?: MockAgentScenario;
 }
 
 export interface DesktopSession {
@@ -67,6 +107,11 @@ export interface DesktopSession {
   stateDir: string;
   /** `<userData>/logs/runtime.log` */
   runtimeLogPath: string;
+  /**
+   * The mock agent's scenario file (`mockAgent`), `null` without one. Its path
+   * is unique to the launch and on every mock process's command line.
+   */
+  mockAgentScenarioFile: string | null;
   /** Lets a `waitForGate` runtime (and every restarted one) exit. */
   openGate: () => void;
   cleanup: () => Promise<void>;
@@ -106,23 +151,40 @@ export function readDevRuntimeDescriptor(): DevRuntimeDescriptor | null {
  * callers compare against a list taken before the launch.
  */
 export function javaProcessesRunning(jar: string): number[] {
+  // The Windows table already holds java.exe only; elsewhere the command line must name java.
+  return processesRunning(jar, WINDOWS_JAVA_PROCESSES, (commandLine) =>
+    IS_WINDOWS ? true : /\bjava\b/.test(commandLine),
+  );
+}
+
+/**
+ * PIDs of the processes whose command line contains `needle` (a path),
+ * read from the OS process table. Given a launch's mock agent scenario file:
+ * every mock agent process that launch's runtime started.
+ */
+export function processesWithArgument(needle: string): number[] {
+  return processesRunning(needle, WINDOWS_PROCESSES, () => true);
+}
+
+function processesRunning(
+  needle: string,
+  windowsQuery: string,
+  accept: (commandLine: string) => boolean,
+): number[] {
   const table = IS_WINDOWS
-    ? execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_JAVA_PROCESSES],
-        { encoding: 'utf8', windowsHide: true },
-      )
+    ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsQuery], {
+        encoding: 'utf8',
+        windowsHide: true,
+      })
     : execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' });
-  // Windows paths are case-insensitive, and the table already holds java.exe only.
-  const needle = IS_WINDOWS ? jar.toLowerCase() : jar;
+  // Windows paths are case-insensitive.
+  const wanted = IS_WINDOWS ? needle.toLowerCase() : needle;
   const pids: number[] = [];
   for (const line of table.split(/\r?\n/)) {
     const match = /^\s*(\d+)\s+(.*)$/.exec(line);
     if (!match) continue;
     const commandLine = IS_WINDOWS ? match[2].toLowerCase() : match[2];
-    if (commandLine.includes(needle) && (IS_WINDOWS || /\bjava\b/.test(commandLine))) {
-      pids.push(Number(match[1]));
-    }
+    if (commandLine.includes(wanted) && accept(commandLine)) pids.push(Number(match[1]));
   }
   return pids;
 }
@@ -147,6 +209,7 @@ function isolatedEnv(
   userDataDir: string,
   runtimeArgv: string[] | null,
   readyTimeoutMs: number | undefined,
+  adapterArgv: string[] | null,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -156,6 +219,14 @@ function isolatedEnv(
   delete env['AGENTS_ROOM_RENDERER_URL'];
   delete env['AGENTS_ROOM_RUNTIME_COMMAND'];
   delete env['ELECTRON_RUN_AS_NODE'];
+  for (const name of Object.keys(env)) {
+    if (INHERITED_ADAPTER_ENV.test(name)) delete env[name];
+  }
+  // The runtime never starts the installed adapter in e2e (fail closed), and
+  // an adapter never sees a developer's Codex home.
+  env['AGENTS_ROOM_E2E'] = '1';
+  env['CODEX_HOME'] = path.join(tmpHome, 'codex-home');
+  if (adapterArgv) env['AGENTS_ROOM_HARNESS_CODEX_COMMAND'] = JSON.stringify(adapterArgv);
   env['HOME'] = tmpHome;
   if (IS_WINDOWS) {
     env['USERPROFILE'] = tmpHome;
@@ -275,12 +346,20 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
   const gateFile = path.join(tmpBase, 'fake-runtime-gate');
   fs.mkdirSync(tmpHome, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
+  let mockAgentScenarioFile: string | null = null;
+  if (opts.mockAgent) {
+    mockAgentScenarioFile = path.join(tmpBase, 'mock-acp-scenario.json');
+    fs.writeFileSync(mockAgentScenarioFile, JSON.stringify(opts.mockAgent));
+  }
 
   const env = isolatedEnv(
     tmpHome,
     userDataDir,
     opts.realRuntime ? null : fakeRuntimeArgv(opts.runtime ?? {}, stateDir, gateFile),
     opts.readyTimeoutMs,
+    mockAgentScenarioFile
+      ? [electronExecutable(), MOCK_ACP_AGENT, '--scenario-file', mockAgentScenarioFile]
+      : null,
   );
   // Real runtime: the JVMs running its jar before the launch are someone else's.
   const realJar = opts.realRuntime ? readDevRuntimeDescriptor()?.jar : undefined;
@@ -299,6 +378,9 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
     if (realJar) {
       for (const pid of javaProcessesRunning(realJar)) if (!javaBefore.has(pid)) forceKill(pid);
     }
+    if (mockAgentScenarioFile) {
+      for (const pid of processesWithArgument(mockAgentScenarioFile)) forceKill(pid);
+    }
     fs.rmSync(tmpBase, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };
 
@@ -314,6 +396,7 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
       userDataDir,
       stateDir,
       runtimeLogPath: path.join(userDataDir, 'logs', 'runtime.log'),
+      mockAgentScenarioFile,
       openGate: () => fs.writeFileSync(gateFile, ''),
       cleanup,
     };
@@ -432,6 +515,50 @@ export function rendererRuntimeState(page: Page): Promise<RuntimeState | null> {
         }
       ).__pixelAgentsTestHooks?.getRuntimeState?.() ?? null,
   );
+}
+
+/**
+ * Sends a command to the runtime on the renderer's own runtime socket (the
+ * `sendRuntimeCommand` test hook), as the project and agent panels will. Its
+ * answers land in the renderer's runtime state (`rendererRuntimeState`).
+ */
+export async function sendRuntimeCommand(page: Page, command: RuntimeClientMessage): Promise<void> {
+  const sent = await page.evaluate(
+    (frame) =>
+      (
+        window as unknown as {
+          __pixelAgentsTestHooks?: {
+            sendRuntimeCommand?: (command: RuntimeClientMessage) => boolean;
+          };
+        }
+      ).__pixelAgentsTestHooks?.sendRuntimeCommand?.(frame) ?? false,
+    command,
+  );
+  expect(sent, 'the desktop renderer has the sendRuntimeCommand test hook').toBe(true);
+}
+
+/** The events the renderer holds for one agent, oldest first. */
+export function agentEvents(state: RuntimeState | null, agentId: string): AgentEvent[] {
+  return state?.recentEvents[agentId] ?? [];
+}
+
+/** The events of one kind, typed by it, in their order. */
+export function eventsOfKind<K extends AgentEvent['kind']>(
+  events: readonly AgentEvent[],
+  kind: K,
+): Array<Extract<AgentEvent, { kind: K }>> {
+  return events.filter((event): event is Extract<AgentEvent, { kind: K }> => event.kind === kind);
+}
+
+/**
+ * The agent's status as the runtime last reported it: the newest
+ * `agentStatusChanged` event the renderer holds, else the snapshot's value.
+ */
+export function agentStatus(state: RuntimeState | null, agentId: string): string | null {
+  const changes = eventsOfKind(agentEvents(state, agentId), 'agentStatusChanged');
+  const last = changes[changes.length - 1];
+  if (last) return last.data.status;
+  return state?.agentSnapshots[agentId]?.status ?? null;
 }
 
 /**

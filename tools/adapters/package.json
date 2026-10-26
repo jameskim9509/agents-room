@@ -1,0 +1,9 @@
+{
+  "name": "agents-room-adapters",
+  "private": true,
+  "description": "ACP adapters the local runtime launches in development (ADR 0003, D11). Not an npm workspace: install with `npm run adapters:install` at the repo root.",
+  "license": "MIT",
+  "dependencies": {
+    "@agentclientprotocol/codex-acp": "2.2.2"
+  }
+}
