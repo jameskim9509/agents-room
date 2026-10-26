@@ -83,7 +83,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
   - 받는 것은 렌더러가 스스로 만든 에셋 프레임뿐이다. 연결 상태는 런타임 소켓의 상태를 그대로 보여준다.
   - 상속 UI가 보내는 업스트림 명령은 런타임에 보내지 않는다. 런타임은 그 명령을 모두 `INVALID_MESSAGE`로 거절한다. `webviewReady`도 보내지 않는다. 런타임은 연결될 때마다 묻지 않아도 스냅샷을 보낸다 ([Renderer gateway](#renderer-gateway)).
 - 런타임이 보낸 프레임은 `webview-ui/src/runtimeState.ts`의 상태 저장소가 받는다. 이 저장소는 런타임 소켓을 다른 무엇보다 먼저 구독하므로 연결 직후의 스냅샷을 놓치지 않는다.
-  - 담는 값: 마지막 스냅샷, 현재 프로젝트, 에이전트 목록, 에이전트별 최근 이벤트 200개와 마지막 `seq`, 에이전트별 `connectionChecked`, 마지막 `projectOpenFailed`와 `commandRejected`. 메시지에서 빠진 값은 `null`로 담는다.
+  - 담는 값: 마지막 스냅샷, 현재 프로젝트, 에이전트 목록, 에이전트별 최근 이벤트 200개와 마지막 `seq`, 에이전트별 `connectionChecked`, 마지막 `projectOpenFailed`와 `commandRejected`. 프레임은 받은 그대로 담는다. 프레임에서 빠진 선택 필드는 빠진 채로(`undefined`) 둔다. 생성된 타입의 `?:` 필드와 같다. 스냅샷에 프로젝트가 없을 때만 `project`를 `null`로 담는다. 화면은 둘 다 "미지정"으로 보여준다 (D3).
   - 스냅샷은 앞서 담은 값을 모두 바꾼다. 스냅샷의 `lastSeq` 이하인 이벤트는 버린다. `agentsUpdated`에서 빠진 에이전트의 값은 지운다.
   - 프레임을 기록만 하고, 상태나 현재 Tool을 계산하지 않는다. 프로젝트 패널과 Detail Panel(SCRUM-18, 19)이 이 값으로 화면을 그린다. 두 화면은 아직 없다.
 - `WebSocketTransport`는 구독자가 생기기 전에 온 메시지를 순서대로 잡아 두었다가 첫 구독자에게 넘긴다(`transport/heldMessages.ts`). 연결 직후 오는 메시지를 잃지 않기 위해서다.
@@ -244,7 +244,7 @@ e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런
   - 형식 검사표의 명령과 필드는 생성된 클래스와 같다.
   - 유효 명령 fixture와 그 변형(필드 삭제, `null`, 다른 타입, 필드 추가)에서 코덱은 ajv와 같은 판정을 낸다.
   - Java JSON Schema 라이브러리를 쓰지 않는 이유는, 검사기가 둘이면 스키마(`if`/`then`/`else`, 타입 없는 `not`, AsyncAPI `discriminator`)를 서로 다르게 읽을 수 있어서다. node는 바인딩 생성 때문에 이미 필요하다.
-- 빌드와 테스트는 루트에서 `npm run runtime:build`(빌드, 테스트, `dev-runtime.json`)와 `npm run runtime:test`로 한다. `scripts/gradle.mjs`가 OS에 맞는 wrapper를 부른다. node가 PATH에 있어야 하고, 루트에서 먼저 `npm ci`(또는 `npm install`)를 해야 한다.
+- 빌드와 테스트는 루트에서 `npm run runtime:build`(빌드, 테스트, `dev-runtime.json`)와 `npm run runtime:test`로 한다. `npm run runtime:assemble`은 테스트 없이 jar와 `dev-runtime.json`만 만든다. CI의 `desktop-windows` job이 이것을 쓴다. `scripts/gradle.mjs`가 OS에 맞는 wrapper를 부른다. node가 PATH에 있어야 하고, 루트에서 먼저 `npm ci`(또는 `npm install`)를 해야 한다.
 - CI의 `runtime` job이 같은 빌드를 Windows(windows-latest)와 Linux(ubuntu-latest)에서 돌린다. Windows 전용 테스트(job object, junction, 8.3 짧은 이름)는 Windows에서 돌고 Linux에서는 건너뛴다. 볼륨에서 8.3 이름이 꺼져 있거나 `mklink /J`가 실패하면 그 테스트만 건너뛴다.
 - Gradle 빌드 캐시가 켜져 있다. 그래서 테스트 작업은 계약 검사기의 결과를 바꿀 수 있는 파일(`core/fixtures`, `core/asyncapi.yaml`, `scripts/check-contract-fixtures.mjs`, `package-lock.json`, `.nvmrc`)을 입력으로 선언한다. 이 중 하나가 바뀌면 캐시된 결과를 쓰지 않고 다시 돈다.
 - job object는 FFM API로 kernel32를 부른다. 그래서 boot jar 매니페스트에 `Enable-Native-Access: ALL-UNNAMED`를 넣었다. 셸의 실행 명령은 그대로다.

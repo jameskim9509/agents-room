@@ -307,7 +307,9 @@ jobs:
   # unit tests and the Playwright Electron suite (npm run e2e:desktop) against
   # the fake runtime and the real one. The real-runtime spec launches the boot
   # jar that runtime/build/dev-runtime.json names; it skips itself only outside
-  # CI, so this job builds the runtime first. Electron 45 downloads its binary
+  # CI, so this job builds the runtime first. It runs `npm run runtime:assemble`
+  # (the jar and dev-runtime.json, no runtime tests): the runtime job above
+  # already runs those tests on windows-latest. Electron 45 downloads its binary
   # in a separate step (no postinstall), and Playwright drives that binary, so
   # no Playwright browser is installed.
   desktop-windows:
@@ -342,8 +344,8 @@ jobs:
       - name: Install Electron Binary
         run: npm run electron:install -w agents-room-desktop
 
-      - name: Build Runtime
-        run: npm run runtime:build
+      - name: Build Runtime Jar
+        run: npm run runtime:assemble
 
       - name: Build Renderer
         run: npm run build:webview

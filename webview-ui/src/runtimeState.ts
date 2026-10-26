@@ -8,8 +8,10 @@
  * dropped (critique D4, architecture.md "Renderer gateway").
  *
  * The reducer only records frames. Deriving a status, a current tool or the
- * Detail Panel rows from them is the panel's job. Values the wire omits are
- * held as `null` (D3).
+ * Detail Panel rows from them is the panel's job. Frames are held as the wire
+ * carried them: an optional field the wire omits stays absent (`undefined`,
+ * as the generated `?:` types say). Only `project`, which the snapshot may
+ * omit, is held as `null` when absent. The panel shows either as "미지정" (D3).
  */
 import type {
   AgentEvent,

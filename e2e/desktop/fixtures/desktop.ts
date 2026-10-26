@@ -1,7 +1,8 @@
 /**
  * Playwright fixture for the desktop shell suite (e2e/desktop). Each test
  * launches the shell through `desktop.launch(...)`; every launched app is
- * closed, its fake runtimes are killed and its temp dirs removed afterwards.
+ * closed, its fake runtimes are killed, any java process a real-runtime launch
+ * left running the jar is killed, and its temp dirs are removed afterwards.
  * On failure runtime.log is attached.
  */
 import { test as base } from '@playwright/test';

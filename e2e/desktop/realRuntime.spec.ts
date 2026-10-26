@@ -4,8 +4,9 @@
  * launches the boot jar that runtime/build/dev-runtime.json names, exactly as
  * in development; nothing is faked on either side.
  *
- * Needs `npm run runtime:build`. Without its output the suite is skipped
- * locally and fails in CI, which builds the runtime first.
+ * Needs `npm run runtime:build` (or `npm run runtime:assemble`, which skips
+ * the runtime tests). Without its output the suite is skipped locally and
+ * fails in CI, which builds the jar first.
  */
 import { expect, test } from './fixtures/desktop';
 import {
@@ -43,11 +44,11 @@ const LOG_RUNTIME_EXITED = '[shell] the runtime exited';
 test.describe('Desktop shell with the real local runtime', () => {
   test.skip(
     descriptor === null && !IN_CI,
-    `${DEV_RUNTIME_DESCRIPTOR} (or the java and jar it names) is missing: run npm run runtime:build first`,
+    `${DEV_RUNTIME_DESCRIPTOR} (or the java and jar it names) is missing: run npm run runtime:build (or runtime:assemble) first`,
   );
 
   test.beforeEach(() => {
-    expect(descriptor, `CI must run npm run runtime:build before e2e:desktop`).not.toBeNull();
+    expect(descriptor, `CI must run npm run runtime:assemble before e2e:desktop`).not.toBeNull();
   });
 
   test('the shell and the runtime complete the handshake, the renderer gets the snapshot, and quitting leaves no java process @area:desktop-runtime', async ({

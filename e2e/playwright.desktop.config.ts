@@ -11,10 +11,13 @@ const htmlReportDir = namespaceE2EPath(path.join(__dirname, '../playwright-repor
 
 /**
  * Desktop shell suite: the built Electron shell (desktop/dist) serving the
- * built renderer (dist/webview) at app://bundle, against a fake runtime.
+ * built renderer (dist/webview) at app://bundle, against a fake runtime, and
+ * in realRuntime.spec.ts against the real runtime jar.
  * Separate from the legacy config on purpose: its testDir never sees these
  * specs, and this config has no VS Code download in a global setup.
- * Run `npm run desktop:build` first.
+ * Run `npm run desktop:build` first. The real-runtime specs also need
+ * `npm run runtime:build` (or `runtime:assemble`): without it they skip
+ * locally and fail in CI.
  */
 export default defineConfig({
   testDir: path.join(__dirname, 'desktop'),

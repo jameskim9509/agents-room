@@ -36,7 +36,7 @@ The agents-room Electron shell (`desktop/`) serving the built renderer at `app:/
 
 ### Desktop shell with the local runtime (`@area:desktop-runtime`)
 
-The built shell against the real local runtime: the boot jar `runtime/build/dev-runtime.json` names, launched by the shell exactly as in development, with nothing faked on either side. This is the end-to-end check of the shell↔runtime handshake (`docs/architecture.md`, "셸과 런타임의 연결"). Covers: the ready line; the renderer joining from `app://bundle` with the per-launch token, while the runtime refuses a missing or wrong token (401) and a foreign Origin (403); the runtime's connect-time snapshot reaching the renderer's runtime state, with no upstream command sent to the runtime; quitting the app ends the runtime on stdin EOF within the shell's 3 s grace, a connected renderer included, and leaves no java process; a shell that ends abruptly leaves no java process either. Needs `npm run runtime:build`: without its output the specs skip locally and fail in CI.
+The built shell against the real local runtime: the boot jar `runtime/build/dev-runtime.json` names, launched by the shell exactly as in development, with nothing faked on either side. This is the end-to-end check of the shell↔runtime handshake (`docs/architecture.md`, "셸과 런타임의 연결"). Covers: the ready line; the renderer joining from `app://bundle` with the per-launch token, while the runtime refuses a missing or wrong token (401) and a foreign Origin (403); the runtime's connect-time snapshot reaching the renderer's runtime state, with no upstream command sent to the runtime; quitting the app ends the runtime on stdin EOF within the shell's 3 s grace, a connected renderer included, and leaves no java process; a shell that ends abruptly leaves no java process either. Needs the runtime jar from `npm run runtime:build` (or `npm run runtime:assemble`, which skips the runtime tests, as CI does): without it the specs skip locally and fail in CI.
 
 ### Pet system (`@area:pets`)
 
@@ -102,7 +102,7 @@ npm run e2e -- --grep "@area:cross-cutting"
 npm run e2e -- --headed                      # watch chromium for standalone test
 
 npm run desktop:build && npm run e2e:desktop   # desktop shell suite (e2e/desktop, no VS Code download)
-npm run runtime:build                          # once, so the real-runtime desktop specs run instead of skipping
+npm run runtime:build                          # once (or runtime:assemble, no tests), so the real-runtime desktop specs run instead of skipping
 
 npm run e2e:inventory                        # regenerate the inventory section below (both configs)
 npm run test:report                          # build the Allure dashboard from latest run
@@ -301,8 +301,8 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 
 ### `@area:desktop-runtime` (2 tests)
 
-- `e2e/desktop/realRuntime.spec.ts:53` — the shell and the runtime complete the handshake, the renderer gets the snapshot, and quitting leaves no java process (Desktop shell with the real local runtime)
-- `e2e/desktop/realRuntime.spec.ts:110` — a shell that ends abruptly leaves no java process: the runtime notices and exits by itself (Desktop shell with the real local runtime)
+- `e2e/desktop/realRuntime.spec.ts:54` — the shell and the runtime complete the handshake, the renderer gets the snapshot, and quitting leaves no java process (Desktop shell with the real local runtime)
+- `e2e/desktop/realRuntime.spec.ts:111` — a shell that ends abruptly leaves no java process: the runtime notices and exits by itself (Desktop shell with the real local runtime)
 
 ### `@area:desktop-shell` (11 tests)
 

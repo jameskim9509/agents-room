@@ -27,7 +27,7 @@ import type { RuntimeState } from '../../../webview-ui/src/runtimeState.js' with
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const DESKTOP_DIR = path.join(REPO_ROOT, 'desktop');
-/** Written by `npm run runtime:build`; the unpackaged shell launches the runtime it names. */
+/** Written by `npm run runtime:build` or `runtime:assemble`; the unpackaged shell launches the runtime it names. */
 export const DEV_RUNTIME_DESCRIPTOR = path.join(REPO_ROOT, 'runtime', 'build', 'dev-runtime.json');
 const FAKE_RUNTIME = path.join(__dirname, '..', 'fixtures', 'fake-runtime.cjs');
 const IS_WINDOWS = process.platform === 'win32';

@@ -11,8 +11,10 @@
  *     (constant-time compare), an Origin outside the allowlist → 403,
  *   - exits on stdin EOF, ending its child process first, after a short
  *     cleanup period (as the real runtime ends its adapters).
- * It sends no protocol messages (the contract is not wired yet), and it is
- * not a model of the Java runtime beyond the handshake.
+ * It sends no protocol frames, not even a snapshot, so a shell spec's renderer
+ * keeps its runtime state at `snapshots: 0`: shell specs never assert on
+ * runtime state. realRuntime.spec.ts covers the contract against the real
+ * jar. Beyond the handshake it is not a model of the Java runtime.
  *
  * Flags:
  *   --mode=ready|silent|exit   ready (default) | never print the ready line | exit before ready
