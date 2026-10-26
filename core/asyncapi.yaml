@@ -2371,7 +2371,7 @@ components:
     # Sprint 0 wires openProject, checkConnection, startAgent, stopAgent,
     # sendPrompt and respondPermission. relocateProject, saveAgentConfig and
     # cancelRun are defined now and answered with commandRejected
-    # {reason: NOT_IMPLEMENTED} until they are wired (Sprint 1). The runtime
+    # {reason: NOT_IMPLEMENTED} until they are wired (Sprint 2). The runtime
     # checks a command's shape, then its ids, then its state or whether it is
     # wired (ADR 0005 decision 2), so a command naming an unknown id gets
     # UNKNOWN_PROJECT, UNKNOWN_AGENT or UNKNOWN_PERMISSION instead.

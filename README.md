@@ -4,10 +4,11 @@ agents-room은 코딩 에이전트를 픽셀 캐릭터로 보여주는 게임형
 
 ## 현재 상태
 
-2026-10-23 기준이며, agents-room 기능은 아직 동작하지 않는다.
+2026-10-26 기준이다. 데스크톱 앱에서 Codex 에이전트를 시작하고 ACP 이벤트를 픽셀 캐릭터와 Detail Panel에 보여주는 흐름은 mock ACP agent로 검증했다. 실제 ChatGPT 로그인으로 Codex를 돌려 보는 확인이 남았다.
 
-- SCRUM Sprint 0(2026-10-18 – 2026-10-25)을 진행하고 있다. 목표는 "데스크톱 IDE에서 Codex 에이전트 하나를 실행하고 ACP 이벤트를 수신하여 픽셀 캐릭터와 상세 패널에 표시할 수 있다"이다. 핵심 스토리는 SCRUM-23, 19, 27이고, 전체 목록은 Jira에서 본다.
-- 다음은 SCRUM Sprint 1(계획)이다.
+- SCRUM Sprint 0(2026-10-18 – 2026-10-26)을 마쳤다. 목표는 "데스크톱 IDE에서 Codex 에이전트 하나를 실행하고 ACP 이벤트를 수신하여 픽셀 캐릭터와 상세 패널에 표시할 수 있다"였다. 스토리 8개(SCRUM-18, 19, 21, 22, 23, 27, 31, 65)는 구현해 머지했지만, 실제 ChatGPT 로그인 확인(SCRUM-23, 65)이 남아 완료 처리하지 않고 모두 SCRUM Sprint 1로 옮겼다.
+- 지금은 SCRUM Sprint 1(2026-10-26 – 2026-11-02)을 진행하고 있다. 목표는 Sprint 0과 같고, 핵심 스토리는 SCRUM-23, 19, 27이다. 전체 목록은 Jira에서 본다.
+- 다음은 SCRUM Sprint 2(계획: Claude Code 연동, 권한 처리, 설정 복구, Windows 배포·업데이트)와 SCRUM Sprint 3이다. Sprint 2는 원래 Sprint 1이었다.
 - 배포 서비스의 모델은 Amazon Bedrock으로 제공한다. MVP에서는 Codex를 ChatGPT 로그인으로, Claude Code를 Bedrock mock 서버(SCRUM-67)로 확인한다. Claude 계정 로그인은 쓰지 않는다 → [ADR 0004](docs/adr/0004-model-authentication.md).
 - 코드는 대부분 pixel-agents 기준선(`d1e007a`) 그대로다: VS Code 확장과 `npx pixel-agents` standalone CLI이며, Claude Code hooks와 JSONL로 동작한다. 데스크톱 셸(`desktop/`), Java 런타임(`runtime/`)과 Codex ACP 연동, 데스크톱 렌더러의 프로젝트·에이전트 패널과 Detail Panel(`webview-ui/src/desktopUi/`)이 들어갔다. 에이전트 추가와 설정, 권한 요청 대화상자, 실행 중지는 아직 없다.
 - `package.json`의 이름은 아직 업스트림 그대로다. 상속한 배포 워크플로는 지웠고, 이 포크에서는 npm·Marketplace로 배포(publish)하지 않는다 → [남은 업스트림 흔적](docs/upstream.md#남은-업스트림-흔적).

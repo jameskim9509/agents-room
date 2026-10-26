@@ -8,6 +8,14 @@ agents-room의 변경 기록이다. 형식은 [Keep a Changelog](https://keepach
 
 ## [Unreleased]
 
+### Changed
+
+- Sprint 0을 마감하고 스프린트 번호를 고쳤다 (2026-10-26): Sprint 0의 미완료 스토리 8개를 새 SCRUM Sprint 1(2026-10-26 – 2026-11-02, 같은 목표)로 옮겼고, 원래 Sprint 1은 Sprint 2로, 원래 Sprint 2는 Sprint 3으로 바꿨다. README의 현재 상태와, 원래 Sprint 1을 가리키던 곳(architecture.md, ux.md, `core/asyncapi.yaml`과 `desktop/src/runtimeCommand.ts`의 주석)을 고쳤다.
+
+## [Sprint 0] - 2026-10-26
+
+완료 처리한 키: 없음. SCRUM-18, 19, 21, 22, 23, 27, 31, 65는 구현을 머지했지만(#3, #8–#13), 실제 ChatGPT 로그인 확인이 남아 Sprint 1로 이월했다.
+
 ### Added
 
 - 프로젝트 문서: `docs/architecture.md`, `docs/ux.md`, `docs/upstream.md`, `docs/adr/` (README와 ADR 0001–0005), `THIRD_PARTY_NOTICES.md`.
