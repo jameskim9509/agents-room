@@ -341,7 +341,7 @@ This section is auto-generated. Do not edit between the markers; CI fails on dri
 - `e2e/desktop/panels.spec.ts:632` — a sign-in that fails reads as an authentication failure at the sign-in stage, apart from a run failure (Desktop panels and pixel world)
 - `e2e/desktop/panels.spec.ts:658` — a session that cannot be created reads as such, with the stage and the generic action (Desktop panels and pixel world)
 - `e2e/desktop/panels.spec.ts:680` — during a long run the window resizes and a character click selects it; an adapter crash shows the error and the app keeps working (Desktop panels and pixel world)
-- `e2e/desktop/panels.spec.ts:774` — the sign-in stage asks for the browser login, and "에이전트 종료" ends it (Desktop panels and pixel world)
+- `e2e/desktop/panels.spec.ts:789` — the sign-in stage asks for the browser login, and "에이전트 종료" ends it (Desktop panels and pixel world)
 
 ### `@area:pets` (3 tests)
 

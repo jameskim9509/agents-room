@@ -711,7 +711,22 @@ test.describe('Desktop panels and pixel world', () => {
         .locator('canvas')
         .first()
         .evaluate((el) => Math.round(el.getBoundingClientRect().width));
-    const wide = await worldWidth();
+    // The window's first size depends on the display (CI runners are smaller), so take the
+    // wide baseline at an explicit 1280x800 once the layout has settled.
+    const settledWorldWidth = async () => {
+      let last = -1;
+      await expect
+        .poll(async () => {
+          const width = await worldWidth();
+          const settled = width === last;
+          last = width;
+          return settled;
+        })
+        .toBe(true);
+      return last;
+    };
+    await setSize(1280, 800);
+    const wide = await settledWorldWidth();
     await setSize(900, 600);
     await expect.poll(worldWidth).toBeLessThan(wide);
     await expect.poll(async () => (await canvasWidth()) === (await worldWidth())).toBe(true);
