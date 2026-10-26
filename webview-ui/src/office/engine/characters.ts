@@ -23,6 +23,12 @@ export function isReadingTool(tool: string | null): boolean {
   return isReadingToolName(tool);
 }
 
+/** Whether the character heads for its seat: it works there, or it is pinned
+ *  to it (agents-room desktop: no process, starting, stopping or in error). */
+function seeksSeat(ch: Character): boolean {
+  return ch.isActive || ch.pinnedToSeat === true;
+}
+
 /** Pixel center of a tile */
 function tileCenter(col: number, row: number): { x: number; y: number } {
   return {
@@ -101,6 +107,12 @@ export function updateCharacter(
 
   switch (ch.state) {
     case CharacterState.TYPE: {
+      // Pinned (agents-room offline, starting, cancelling, error): hold the
+      // seated pose as it is, without animating or standing up.
+      if (ch.pinnedToSeat) {
+        ch.frameTimer = 0;
+        break;
+      }
       if (ch.frameTimer >= TYPE_FRAME_DURATION_SEC) {
         ch.frameTimer -= TYPE_FRAME_DURATION_SEC;
         ch.frame = (ch.frame + 1) % 2;
@@ -126,8 +138,8 @@ export function updateCharacter(
       // No idle animation — static pose
       ch.frame = 0;
       if (ch.seatTimer < 0) ch.seatTimer = 0; // clear turn-end sentinel
-      // If became active, pathfind to seat
-      if (ch.isActive) {
+      // If became active (or pinned to its seat), pathfind to seat
+      if (seeksSeat(ch)) {
         if (!ch.seatId) {
           // No seat assigned — type in place
           ch.state = CharacterState.TYPE;
@@ -223,7 +235,7 @@ export function updateCharacter(
         ch.x = center.x;
         ch.y = center.y;
 
-        if (ch.isActive) {
+        if (seeksSeat(ch)) {
           if (!ch.seatId) {
             // No seat — type in place
             ch.state = CharacterState.TYPE;
@@ -290,8 +302,8 @@ export function updateCharacter(
         ch.moveProgress = 0;
       }
 
-      // If became active while wandering, repath to seat
-      if (ch.isActive && ch.seatId) {
+      // If became active (or pinned) while wandering, repath to seat
+      if (seeksSeat(ch) && ch.seatId) {
         const seat = seats.get(ch.seatId);
         if (seat) {
           const lastStep = ch.path[ch.path.length - 1];

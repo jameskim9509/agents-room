@@ -20,7 +20,7 @@ import {
 import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js';
 import type { OfficeState } from '../engine/officeState.js';
 import { overlayProjection } from '../projection.js';
-import type { ToolActivity } from '../types.js';
+import type { CharacterBubble, ToolActivity } from '../types.js';
 import { CharacterState } from '../types.js';
 
 // Both turn-end states show the green checkmark bubble. A finished turn (Stop)
@@ -47,7 +47,7 @@ function getActivityText(
   agentId: number,
   agentTools: Record<number, ToolActivity[]>,
   isActive: boolean,
-  bubbleType: 'permission' | 'waiting' | null,
+  bubbleType: CharacterBubble | null,
   waitingAwaitingInput: boolean,
 ): string {
   if (bubbleType === 'permission') return 'Needs approval';

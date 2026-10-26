@@ -165,6 +165,20 @@ export interface OfficeLayout {
   areaTiles?: Array<string | null>;
 }
 
+/**
+ * Speech bubbles over a character. `permission` and `waiting` are inherited;
+ * the agents-room desktop adds `error` (agent error or failed run), `cancelled`
+ * and `warning` (refused or limit reached), per ux.md 상태 어휘.
+ */
+export type CharacterBubble = 'permission' | 'waiting' | 'error' | 'cancelled' | 'warning';
+
+/**
+ * agents-room desktop: the icon of the reported tool kind (ux.md 행동 매핑),
+ * drawn above the head while no bubble shows. `generic` is the generic work
+ * display for unknown or unreported kinds.
+ */
+export type ActivityIcon = 'search' | 'terminal' | 'generic';
+
 export interface Character {
   id: number;
   state: CharacterState;
@@ -201,7 +215,7 @@ export interface Character {
   /** Assigned seat uid, or null if no seat */
   seatId: string | null;
   /** Active speech bubble type, or null if none showing */
-  bubbleType: 'permission' | 'waiting' | null;
+  bubbleType: CharacterBubble | null;
   /** Only meaningful while bubbleType === 'waiting': true when the agent went
    *  idle waiting on the user (surfaces the "Waiting for input" label);
    *  false/undefined when the agent simply finished its turn (checkmark only,
@@ -233,6 +247,18 @@ export interface Character {
    *  per-consumer guard reads this flag. It exists for the render/e2e snapshot
    *  (testHooks.getCharacters) to tell the greeter from agents. */
   isGreeter?: boolean;
+
+  // -- agents-room desktop (set only by desktopUi/runtimeWorld.ts) --
+  /** Driven by the local runtime's AgentEvents. A click never clears its
+   *  permission or lasting error bubble: only the runtime's answer does (R9). */
+  isRuntimeAgent?: boolean;
+  /** Stays at (or walks back to) its seat and holds its pose without
+   *  animating: `offline`, `starting`, `cancelling` and `error`. */
+  pinnedToSeat?: boolean;
+  /** The agent has no process (`offline`): drawn translucent, like a headless agent. */
+  isOffline?: boolean;
+  /** Icon of the tool kind being worked on, or null. */
+  activityIcon?: ActivityIcon | null;
 
   // -- Agent Teams --
   /** Team name this agent belongs to */

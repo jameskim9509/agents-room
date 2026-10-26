@@ -1,8 +1,10 @@
 import type { RuntimeClientMessage } from '../../core/src/messages.js';
 import type { ColorValue } from './components/ui/types.js';
+import type { RuntimeCharacterInfo } from './desktopUi/runtimeWorld.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { isGhostHeadlessAgentsEnabled } from './office/engine/renderer.js';
 import { carpetJunctionCase } from './office/sprites/carpetTiles.js';
+import type { ActivityIcon, CharacterBubble } from './office/types.js';
 import type { RuntimeState } from './runtimeState.js';
 import { runtimeStateStore, sendRuntimeCommand } from './transport/index.js';
 
@@ -14,11 +16,35 @@ declare global {
         id: number;
         matrixEffect: 'spawn' | 'despawn' | null;
         agentName?: string;
-        bubbleType: 'permission' | 'waiting' | null;
+        bubbleType: CharacterBubble | null;
         waitingAwaitingInput?: boolean;
         isHeadless?: boolean;
         isGreeter?: boolean;
+        /** FSM state ('idle' | 'walk' | 'type') and whether it works at its seat. */
+        state: string;
+        isActive: boolean;
+        /** The engine's tool name (desktop: the ACP tool kind). */
+        currentTool: string | null;
+        /** Desktop shell: runtime-driven characters' extra pose state. */
+        isRuntimeAgent?: boolean;
+        pinnedToSeat?: boolean;
+        isOffline?: boolean;
+        activityIcon?: ActivityIcon | null;
       }>;
+      /**
+       * Desktop shell: one row per runtime agent the world shows, with the
+       * behaviour applied to its character and how many times the world had to
+       * change the character (SCRUM-27: repeated events change nothing).
+       */
+      getRuntimeAgents?: () => RuntimeCharacterInfo[];
+      /** Desktop shell: the agent the Detail Panel shows, or null. */
+      getSelectedRuntimeAgent?: () => string | null;
+      /**
+       * Desktop shell: where a runtime agent's character is on screen (client
+       * coordinates of its body), so e2e can click it with the real mouse. null
+       * when the agent has no character or the world is not laid out yet.
+       */
+      getCharacterClientPoint?: (agentId: string) => { x: number; y: number } | null;
       /** Effective "Display headless as ghosts" setting the renderer is using. */
       getGhostHeadlessAgents?: () => boolean;
       // ── Carpet + Areas observability (added for carpet/areas e2e) ──
@@ -94,7 +120,7 @@ declare global {
       getRuntimeState?: () => RuntimeState | null;
       /**
        * Desktop shell: sends a command to the local runtime over the renderer's
-       * own runtime socket, as the panels will. `false` elsewhere (nothing sent).
+       * own runtime socket, as the panels do. `false` elsewhere (nothing sent).
        */
       sendRuntimeCommand?: (command: RuntimeClientMessage) => boolean;
     };
@@ -124,7 +150,11 @@ declare global {
  * - sendRuntimeCommand(command): desktop shell only, sends a runtime command
  *   (openProject, startAgent, sendPrompt, ...) on the renderer's runtime socket,
  *   so its answers (including the sender-only ones, such as commandRejected)
- *   land in getRuntimeState(). The project and agent panels come later.
+ *   land in getRuntimeState(). The panels send through the same path.
+ * - getRuntimeAgents(), getSelectedRuntimeAgent(), getCharacterClientPoint(id):
+ *   desktop shell only, set by desktopUi/DesktopShell.tsx (they need its
+ *   world): the runtime agents' characters and their behaviour, the agent the
+ *   Detail Panel shows, and where a character is on screen for a mouse click.
  */
 export function installTestHooks(officeStateRef: { current: OfficeState | null }): void {
   if (typeof window === 'undefined') return;
@@ -145,6 +175,13 @@ export function installTestHooks(officeStateRef: { current: OfficeState | null }
       waitingAwaitingInput: ch.waitingAwaitingInput,
       isHeadless: ch.isHeadless,
       isGreeter: ch.isGreeter,
+      state: ch.state,
+      isActive: ch.isActive,
+      currentTool: ch.currentTool,
+      isRuntimeAgent: ch.isRuntimeAgent,
+      pinnedToSeat: ch.pinnedToSeat,
+      isOffline: ch.isOffline,
+      activityIcon: ch.activityIcon,
     }));
   };
 

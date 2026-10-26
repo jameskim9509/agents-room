@@ -13,6 +13,9 @@ import { Tooltip } from './components/Tooltip.js';
 import { Modal } from './components/ui/Modal.js';
 import { VersionIndicator } from './components/VersionIndicator.js';
 import { ZoomControls } from './components/ZoomControls.js';
+import { getDesktopBridge } from './desktopBridge.js';
+import { createRuntimeWorld } from './desktopUi/createRuntimeWorld.js';
+import { DesktopShell } from './desktopUi/DesktopShell.js';
 import { useEditorActions } from './hooks/useEditorActions.js';
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js';
 import { useExtensionMessages } from './hooks/useExtensionMessages.js';
@@ -29,7 +32,7 @@ import { getPetCount } from './office/sprites/petSpriteData.js';
 import { EditTool, type OfficeLayout } from './office/types.js';
 import { isBrowserRuntime, isE2E } from './runtime.js';
 import { installTestHooks } from './testHooks.js';
-import { transport } from './transport/index.js';
+import { runtimeStateStore, sendRuntimeCommand, transport } from './transport/index.js';
 
 // Game state lives outside React — updated imperatively by message handlers
 const officeStateRef = { current: null as OfficeState | null };
@@ -46,6 +49,10 @@ function getOfficeState(): OfficeState {
   }
   return officeStateRef.current;
 }
+
+// Desktop shell only: the runtime's agents as characters (desktopUi/runtimeWorld.ts).
+const desktopBridge = getDesktopBridge();
+const runtimeWorld = runtimeStateStore ? createRuntimeWorld(getOfficeState) : null;
 
 function App() {
   // Browser runtime (dev or static dist): dispatch mock messages after the
@@ -327,11 +334,9 @@ function App() {
       return false;
     })();
 
-  if (!layoutReady) {
-    return <div className="w-full h-full flex items-center justify-center ">Loading...</div>;
-  }
-
-  return (
+  const world = !layoutReady ? (
+    <div className="w-full h-full flex items-center justify-center ">Loading...</div>
+  ) : (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden">
       <OfficeCanvas
         officeState={officeState}
@@ -602,6 +607,27 @@ function App() {
       )}
     </div>
   );
+
+  // Desktop shell: the world is the middle of three columns, between the
+  // project panel and the Detail Panel (desktopUi/DesktopShell.tsx).
+  if (runtimeWorld && runtimeStateStore && desktopBridge) {
+    return (
+      <DesktopShell
+        store={runtimeStateStore}
+        bridge={desktopBridge}
+        send={sendRuntimeCommand}
+        world={runtimeWorld}
+        officeState={officeState}
+        layoutReady={layoutReady}
+        worldRef={containerRef}
+        zoom={editor.zoom}
+        panRef={editor.panRef}
+      >
+        {world}
+      </DesktopShell>
+    );
+  }
+  return world;
 }
 
 export default App;

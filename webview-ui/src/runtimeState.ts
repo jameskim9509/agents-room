@@ -7,11 +7,18 @@
  * an old one. Events the snapshot already covers (`seq <= lastSeq`) are
  * dropped (critique D4, architecture.md "Renderer gateway").
  *
- * The reducer only records frames. Deriving a status, a current tool or the
- * Detail Panel rows from them is the panel's job. Frames are held as the wire
- * carried them: an optional field the wire omits stays absent (`undefined`,
- * as the generated `?:` types say). Only `project`, which the snapshot may
- * omit, is held as `null` when absent. The panel shows either as "미지정" (D3).
+ * The reducer records frames as the wire carried them: an optional field the
+ * wire omits stays absent (`undefined`, as the generated `?:` types say). Only
+ * `project`, which the snapshot may omit, is held as `null` when absent. The
+ * panel shows either as "미지정" (D3). `recentEvents` is that record for
+ * events: the newest 200 per agent, one per frame.
+ *
+ * Next to the record, the reducer folds each accepted event once into the
+ * agent's lasting state (`agentStates`) and appends it to the list the
+ * "최근 이벤트" rows come from (`eventLogs`, chunks of one message joined),
+ * both in runtimeAgentState.ts. The panels read those, never a replay of the
+ * capped record, so a long run keeps its state however many events it streams
+ * (ADR 0005 decision 2: the snapshot, then every newer event).
  */
 import type {
   AgentEvent,
@@ -25,6 +32,13 @@ import type {
   RuntimeServerMessage,
 } from '../../core/src/messages.js';
 import { RUNTIME_RECENT_EVENTS_MAX } from './constants.js';
+import {
+  type AgentState,
+  agentStateFromSnapshot,
+  appendEventLog,
+  applyAgentStateEvent,
+  OFFLINE_AGENT_STATE,
+} from './runtimeAgentState.js';
 import type { MessageTransport } from './transport/types.js';
 
 export interface RuntimeState {
@@ -38,8 +52,12 @@ export interface RuntimeState {
   agents: AgentSummary[];
   /** Per agent id: the runtime's view at the last snapshot. */
   agentSnapshots: Record<string, AgentSnapshot>;
-  /** Per agent id: the snapshot's event tail and every newer event, oldest first. */
+  /** Per agent id: the snapshot's event tail and every newer event, oldest first (newest 200 kept). */
   recentEvents: Record<string, AgentEvent[]>;
+  /** Per agent id: its state folded from the snapshot and every newer event (runtimeAgentState.ts). */
+  agentStates: Record<string, AgentState>;
+  /** Per agent id: the "최근 이벤트" list, chunks of one message joined, newest 200 kept. */
+  eventLogs: Record<string, AgentEvent[]>;
   /** Per agent id: the newest `seq` held. Events at or below it are dropped. */
   lastSeq: Record<string, number>;
   /** Per agent id: the latest `checkConnection` result. */
@@ -58,6 +76,8 @@ export const INITIAL_RUNTIME_STATE: RuntimeState = {
   agents: [],
   agentSnapshots: {},
   recentEvents: {},
+  agentStates: {},
+  eventLogs: {},
   lastSeq: {},
   connectionChecks: {},
   projectOpenFailed: null,
@@ -80,6 +100,14 @@ function applyAgentEvent(state: RuntimeState, event: AgentEvent): RuntimeState {
       ...state.recentEvents,
       [agentId]: events.slice(-RUNTIME_RECENT_EVENTS_MAX),
     },
+    agentStates: {
+      ...state.agentStates,
+      [agentId]: applyAgentStateEvent(state.agentStates[agentId] ?? OFFLINE_AGENT_STATE, event),
+    },
+    eventLogs: {
+      ...state.eventLogs,
+      [agentId]: appendEventLog(state.eventLogs[agentId] ?? [], event),
+    },
   };
 }
 
@@ -92,11 +120,16 @@ export function applyRuntimeFrame(state: RuntimeState, frame: RuntimeServerMessa
     case 'snapshot': {
       const agentSnapshots: Record<string, AgentSnapshot> = {};
       const recentEvents: Record<string, AgentEvent[]> = {};
+      const agentStates: Record<string, AgentState> = {};
+      const eventLogs: Record<string, AgentEvent[]> = {};
       const lastSeq: Record<string, number> = {};
       for (const snapshot of frame.agents) {
         const { agentId } = snapshot.agent;
         agentSnapshots[agentId] = snapshot;
         recentEvents[agentId] = snapshot.recentEvents.slice(-RUNTIME_RECENT_EVENTS_MAX);
+        agentStates[agentId] = agentStateFromSnapshot(snapshot);
+        // The runtime's tail is already merged (ADR 0005 decision 2).
+        eventLogs[agentId] = recentEvents[agentId];
         lastSeq[agentId] = snapshot.lastSeq;
       }
       return {
@@ -108,6 +141,8 @@ export function applyRuntimeFrame(state: RuntimeState, frame: RuntimeServerMessa
         agents: frame.agents.map((snapshot) => snapshot.agent),
         agentSnapshots,
         recentEvents,
+        agentStates,
+        eventLogs,
         lastSeq,
       };
     }
@@ -128,6 +163,8 @@ export function applyRuntimeFrame(state: RuntimeState, frame: RuntimeServerMessa
         agents: frame.agents,
         agentSnapshots: pick(state.agentSnapshots, ids),
         recentEvents: pick(state.recentEvents, ids),
+        agentStates: pick(state.agentStates, ids),
+        eventLogs: pick(state.eventLogs, ids),
         lastSeq: pick(state.lastSeq, ids),
         connectionChecks: pick(state.connectionChecks, ids),
       };

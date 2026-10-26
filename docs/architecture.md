@@ -1,6 +1,6 @@
 # 아키텍처
 
-이 문서는 agents-room의 목표 구조를 설명한다. 구현을 시작한 것은 [데스크톱 셸](#데스크톱-셸)(`desktop/`)과 렌더러의 데스크톱 분기, 로컬 런타임([`runtime/`](#로컬-런타임-코드-구성): 프로젝트 열기와 Codex ACP 연결)뿐이다. 나머지 코드는 아직 pixel-agents 기준선([`d1e007a`](upstream.md#포크-기준)) 그대로이고, 나머지 구성요소는 계획이다.
+이 문서는 agents-room의 목표 구조를 설명한다. 구현을 시작한 것은 [데스크톱 셸](#데스크톱-셸)(`desktop/`)과 렌더러의 데스크톱 분기와 화면([데스크톱 렌더러 화면](#데스크톱-렌더러-화면)), 로컬 런타임([`runtime/`](#로컬-런타임-코드-구성): 프로젝트 열기와 Codex ACP 연결)뿐이다. 나머지 코드는 아직 pixel-agents 기준선([`d1e007a`](upstream.md#포크-기준)) 그대로이고, 나머지 구성요소는 계획이다.
 화면과 문구는 [ux.md](ux.md), 결정과 대안은 [ADR](adr/README.md), 업스트림 코드 상세는 [upstream.md](upstream.md)에 있다.
 
 ## 용어집
@@ -83,13 +83,31 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
   - 받는 것은 렌더러가 스스로 만든 에셋 프레임뿐이다. 연결 상태는 런타임 소켓의 상태를 그대로 보여준다.
   - 상속 UI가 보내는 업스트림 명령은 런타임에 보내지 않는다. 런타임은 그 명령을 모두 `INVALID_MESSAGE`로 거절한다. `webviewReady`도 보내지 않는다. 런타임은 연결될 때마다 묻지 않아도 스냅샷을 보낸다 ([Renderer gateway](#renderer-gateway)).
 - 런타임이 보낸 프레임은 `webview-ui/src/runtimeState.ts`의 상태 저장소가 받는다. 이 저장소는 런타임 소켓을 다른 무엇보다 먼저 구독하므로 연결 직후의 스냅샷을 놓치지 않는다.
-  - 담는 값: 마지막 스냅샷, 현재 프로젝트, 에이전트 목록, 에이전트별 최근 이벤트 200개와 마지막 `seq`, 에이전트별 `connectionChecked`, 마지막 `projectOpenFailed`와 `commandRejected`. 프레임은 받은 그대로 담는다. 프레임에서 빠진 선택 필드는 빠진 채로(`undefined`) 둔다. 생성된 타입의 `?:` 필드와 같다. 스냅샷에 프로젝트가 없을 때만 `project`를 `null`로 담는다. 화면은 둘 다 "미지정"으로 보여준다 (D3).
+  - 담는 값: 마지막 스냅샷, 현재 프로젝트, 에이전트 목록, 에이전트별 최근 이벤트 200개(`recentEvents`, 프레임 하나에 하나)와 마지막 `seq`, 에이전트별 상태(`agentStates`)와 "최근 이벤트" 목록(`eventLogs`), 에이전트별 `connectionChecked`, 마지막 `projectOpenFailed`와 `commandRejected`. 프레임은 받은 그대로 담는다. 프레임에서 빠진 선택 필드는 빠진 채로(`undefined`) 둔다. 생성된 타입의 `?:` 필드와 같다. 스냅샷에 프로젝트가 없을 때만 `project`를 `null`로 담는다. 화면은 둘 다 "미지정"으로 보여준다 (D3).
   - 스냅샷은 앞서 담은 값을 모두 바꾼다. 스냅샷의 `lastSeq` 이하인 이벤트는 버린다. `agentsUpdated`에서 빠진 에이전트의 값은 지운다.
-  - 프레임을 기록만 하고, 상태나 현재 Tool을 계산하지 않는다. 프로젝트 패널과 Detail Panel(SCRUM-18, 19)이 이 값으로 화면을 그린다. 두 화면은 아직 없다.
-- 렌더러가 런타임에 명령을 보내는 길은 `transport/index.ts`의 `sendRuntimeCommand(command)` 하나다. 런타임 소켓으로 보내고, 소켓이 열려 있지 않으면 열릴 때까지 쌓아 둔다. 답은 프레임으로 와서 위 상태 저장소에 담긴다. 패널이 생기기 전에는 e2e test hook(`__pixelAgentsTestHooks.sendRuntimeCommand`)만 이것을 부른다.
+  - 이벤트는 받을 때 한 번씩 그 에이전트의 상태에 반영한다(`webview-ui/src/runtimeAgentState.ts`): 상태, 세션, 시작 단계, 실행과 작업 요청, 현재 실행의 Tool 호출, 마지막 실행과 그 Tool 호출, 응답 글, 대기 중인 권한 요청, 오류, 인증 표시값, 세션 단위 보고, 마지막으로 보고된 `agentInfo`. 스냅샷을 받으면 이 상태를 스냅샷에서 다시 만든다. 스냅샷에 없는 것(시작 단계, 응답 글, 실행이 어느 시작의 것인지)은 스냅샷의 이벤트 꼬리에서 꺼낸다. 이 상태는 런타임이 보낸 값을 옮길 뿐, 상태를 다시 계산하거나 Tool 호출을 다시 병합하지 않는다 (ADR 0005 결정 4, 6). 200개로 자른 목록을 다시 읽지 않으므로 긴 실행도 상태를 잃지 않는다.
+  - "최근 이벤트" 목록(`eventLogs`)은 같은 메시지의 이어진 텍스트 청크를 받을 때 한 항목으로 합친 뒤 최근 200개를 남긴다. 런타임의 꼬리(`RecentEvents`)와 같은 규칙이지만, 생각 청크는 남기고(접힌 행), 합친 항목은 첫 청크의 `seq`를 쓴다. 화면은 이 값들에서 자기 값을 꺼낸다 ([데스크톱 렌더러 화면](#데스크톱-렌더러-화면)).
+- 렌더러가 런타임에 명령을 보내는 길은 `transport/index.ts`의 `sendRuntimeCommand(command)` 하나다. 런타임 소켓으로 보내고, 소켓이 열려 있지 않으면 열릴 때까지 쌓아 둔다. 답은 프레임으로 와서 위 상태 저장소에 담긴다. 패널과 e2e test hook(`__pixelAgentsTestHooks.sendRuntimeCommand`)이 이것을 부른다.
 - `WebSocketTransport`는 구독자가 생기기 전에 온 메시지를 순서대로 잡아 두었다가 첫 구독자에게 넘긴다(`transport/heldMessages.ts`). 연결 직후 오는 메시지를 잃지 않기 위해서다.
 - 렌더러는 스프라이트, 가구, 기본 레이아웃을 자기 번들에서 읽는다(`webview-ui/src/localAssets.ts`). Vite 빌드가 디코딩한 JSON(`assets/decoded/*.json`)을 함께 내보낸다. 런타임은 에셋을 보내지 않는다. 이 에셋 프레임의 타입(`LocalAssetMessage`)은 계약 밖의 렌더러 전용 타입이고, 프레임은 소켓을 지나지 않는다.
 - 데스크톱에서는 레이아웃 편집("Layout")과 "+ Agent" 버튼을 숨긴다. 레이아웃 편집은 post-MVP다 (SCRUM-59). Settings에서도 VS Code나 업스트림 서버만 처리하는 항목을 숨긴다: Open Sessions Folder, Export/Import Layout, Add Asset Directory, Watch All Sessions, Instant Detection (Hooks), Display Headless as Ghosts. 런타임이 맡을 설정은 계약이 정해지면 다시 넣는다.
+
+### 데스크톱 렌더러 화면
+
+데스크톱에서만 `App.tsx`가 픽셀 월드를 세 열 화면의 가운데에 둔다(`webview-ui/src/desktopUi/DesktopShell.tsx`, D7). VS Code와 standalone은 지금까지처럼 픽셀 월드만 그린다. 화면 배치와 문구는 [ux.md](ux.md#sprint-0-구현)에 있다.
+
+| 파일 (`webview-ui/src/desktopUi/`)                                                                            | 맡는 일                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentView.ts`                                                                                                | 에이전트마다 화면에 쓸 값(상태, 세션 상태, 시작 단계, 작업 요청, 현재 실행의 Tool 호출과 현재 Tool, 마지막 실행, 답 글, 대기 중인 권한 요청, 오류, 세션 단위 보고)을 저장소가 접어 둔 상태(`agentStates`)에서 꺼낸다. 스냅샷 없이 `agentsUpdated`로 온 에이전트는 `offline`에서 시작한다. 새 시작 뒤에는 이전 실행을 현재 실행으로 내놓지 않는다 (R8) |
+| `eventRows.ts`, `detailText.ts`, `fileTreeRows.ts`, `agentControls.ts`, `strings.ts`                          | "최근 이벤트" 행(이어진 청크 합치기), Detail Panel의 줄(실행 결과와 그 색, 사용량과 비용), 파일 트리 순서, 시작·종료·연결 확인 버튼을 켤 조건, 한국어 문구                                                                                                                                                                                            |
+| `commandFeedback.ts`                                                                                          | 보낸 명령과 그 답을 잇는다. 저장소는 마지막 `commandRejected`와 에이전트별 마지막 `connectionChecked`만 담으므로, 명령을 보낼 때 그 값을 적어 두고 그보다 새 값이 같은 대상(에이전트, 권한 요청)을 가리키면 그 명령의 답으로 본다                                                                                                                     |
+| `characterBehaviour.ts`, `agentHandles.ts`, `runtimeWorld.ts`, `createRuntimeWorld.ts`                        | 에이전트 상태와 Tool `kind`를 캐릭터 행동으로 바꾼다(ux.md 행동 매핑). UUID `agentId`를 엔진의 정수 id로 잇는다(1부터, 다시 쓰지 않는다). 엔진은 바뀐 부분만 고친다: 같은 값이 다시 와도 `addAgent`, `setAgentActive`를 다시 부르지 않는다 (SCRUM-27)                                                                                                 |
+| `useRuntimeState.ts`                                                                                          | 상태 저장소를 구독하되, 다시 그리기는 애니메이션 프레임마다 한 번으로 묶는다. 저장소는 프레임을 모두 바로 담는다 (D24, SCRUM-22)                                                                                                                                                                                                                      |
+| `DesktopShell.tsx`, `ProjectPanel.tsx`, `FileTree.tsx`, `AgentCard.tsx`, `DetailPanel.tsx`, `AgentLabels.tsx` | 세 열 화면, 프로젝트·에이전트 패널, Detail Panel, 캐릭터 위 이름 라벨                                                                                                                                                                                                                                                                                 |
+
+- 선택은 엔진의 `selectedAgentId` 하나다. 캔버스 클릭이 바꾼 값을 화면이 프레임마다 읽어 `agentId`로 되돌리고, 카드 클릭은 같은 값을 쓴다. 그래서 캐릭터와 Detail Panel의 선택이 어긋나지 않는다.
+- 렌더러는 명령을 `sendRuntimeCommand`로만 보낸다: `openProject`(셸의 `pickProjectFolder()`가 고른 경로, 최근 프로젝트의 경로), `startAgent`, `stopAgent`, `checkConnection`(카드의 "연결 확인"), `sendPrompt`, `respondPermission`. `cancelRun`, `saveAgentConfig`, `relocateProject`를 부르는 화면은 아직 없다. 거절(`commandRejected`)은 그 명령을 보낸 자리에 보여준다 ([ux.md](ux.md#sprint-0-구현)).
+- 픽셀 월드는 에이전트마다 캐릭터를 하나 둔다. 런타임이 정한 팔레트와 색조를 쓰고, 첫 스냅샷에 있던 에이전트는 생성 효과 없이, 나중에 온 에이전트는 효과와 함께 나타난다. 엔진에 더한 것은 작다: 자리에 앉은 채 멈추는 캐릭터(`pinnedToSeat`), 반투명(`isOffline`), Tool kind 아이콘(`activityIcon`), 말풍선 3종(`error`, `cancelled`, `warning`), 그리고 런타임 에이전트의 권한·오류 말풍선은 클릭으로 지우지 않는 규칙이다 ([upstream.md](upstream.md#상속-범위)). 서브에이전트 캐릭터를 만드는 길(`addSubagent`)은 부르지 않는다 (R4).
 
 ### 셸과 런타임의 약속
 
@@ -101,7 +119,7 @@ ACP adapter ── 어댑터 자체 인증과 모델 호출 (ADR 0004) ──▶
 4. 시작 실패나 예상하지 않은 종료에는 "로컬 런타임을 시작하지 못했습니다" 대화상자를 띄운다 (문구는 [ux.md](ux.md#문구-목록)). "다시 시작"은 새 토큰으로 런타임을 한 번 더 띄운다. 자동으로 다시 시작하지 않는다.
 5. 앱을 끄면 stdin을 닫고 3초 기다린 뒤, 살아 있으면 프로세스 트리를 강제로 끝낸다.
 
-e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런타임(`e2e/desktop/fixtures/fake-runtime.cjs`)으로 셸을 검증한다. `e2e/desktop/realRuntime.spec.ts`는 셸이 `runtime/build/dev-runtime.json`의 실제 런타임 jar를 띄우게 하고 두 쪽의 연결을 끝까지 확인한다: 준비 줄, `app://bundle`에서 토큰으로 접속, 토큰과 Origin 검사, 렌더러에 온 스냅샷, 앱을 끈 뒤 남은 java 프로세스가 없음. `e2e/desktop/agentRun.spec.ts`는 같은 실제 런타임이 기본 Codex 에이전트를 mock ACP agent로 띄우게 하고(`AGENTS_ROOM_HARNESS_CODEX_COMMAND`, `AGENTS_ROOM_E2E=1`), 폴더 선택기(stub)로 고른 프로젝트를 열고, 에이전트를 시작하고, 프롬프트를 보낸다. 렌더러의 상태 저장소에 온 이벤트의 순서(`seq`, `starting` → `ready` → `running` → `ready`, Tool 호출, 메시지 청크, `runEnded`), 중지, 비정상 종료 뒤의 `error`와 다시 시작, 앱을 끈 뒤 남은 java와 mock 프로세스가 없음을 본다. mock은 셸의 Electron을 Node로 써서 돈다. 데스크톱 e2e의 모든 실행은 `AGENTS_ROOM_E2E=1`과 격리된 `CODEX_HOME`을 쓴다. 이 spec들은 런타임을 빌드하지 않은 로컬에서는 건너뛴다. CI(`desktop-windows` job)는 런타임을 먼저 빌드하고, 거기서 jar가 없으면 실패한다.
+e2e(`npm run e2e:desktop`, `e2e/desktop/`)는 이 약속만 말하는 가짜 런타임(`e2e/desktop/fixtures/fake-runtime.cjs`)으로 셸을 검증한다. `e2e/desktop/realRuntime.spec.ts`는 셸이 `runtime/build/dev-runtime.json`의 실제 런타임 jar를 띄우게 하고 두 쪽의 연결을 끝까지 확인한다: 준비 줄, `app://bundle`에서 토큰으로 접속, 토큰과 Origin 검사, 렌더러에 온 스냅샷, 앱을 끈 뒤 남은 java 프로세스가 없음. `e2e/desktop/agentRun.spec.ts`는 같은 실제 런타임이 기본 Codex 에이전트를 mock ACP agent로 띄우게 하고(`AGENTS_ROOM_HARNESS_CODEX_COMMAND`, `AGENTS_ROOM_E2E=1`), 폴더 선택기(stub)로 고른 프로젝트를 열고, 에이전트를 시작하고, 프롬프트를 보낸다. 렌더러의 상태 저장소에 온 이벤트의 순서(`seq`, `starting` → `ready` → `running` → `ready`, Tool 호출, 메시지 청크, `runEnded`), 중지, 비정상 종료 뒤의 `error`와 다시 시작, 앱을 끈 뒤 남은 java와 mock 프로세스가 없음을 본다. mock은 셸의 Electron을 Node로 써서 돈다. `e2e/desktop/panels.spec.ts`는 같은 실제 런타임과 mock으로 화면을 DOM으로 조작한다: 폴더 선택기(stub)의 취소, 잘못된 폴더의 오류 문구와 다시 고르기, 프로젝트 이름·경로·파일 트리, 최근 프로젝트, 캐릭터 클릭과 카드 클릭의 선택, 시작과 작업 요청, Tool kind마다 바뀌는 "현재 Tool"과 캐릭터 행동(test hook으로 읽는다), 수신 순서의 이벤트, 최종 응답, 엔진의 캐릭터 수(서브에이전트나 중복 캐릭터가 없음), 권한 요청 버튼과 캐릭터 클릭, 보고되지 않은 Plan이 없음, "연결 확인", 200개보다 많은 이벤트를 보내는 실행의 상태와 처음부터 남은 응답, 실행 중 다른 프로젝트 열기 거절, 실행 중 창 크기 변경, 어댑터가 죽은 뒤의 오류와 다시 시작(이전 실행은 현재 실행에서 빠진다), 인증 단계 문구, 인증 실패와 세션 생성 실패의 단계별 오류. 이전 세션이 남긴 데이터는 실행 전에 앱 데이터 디렉터리에 써 둔다(`beforeLaunch`). 데스크톱 e2e의 모든 실행은 `AGENTS_ROOM_E2E=1`과 격리된 `CODEX_HOME`을 쓴다. 이 spec들은 런타임을 빌드하지 않은 로컬에서는 건너뛴다. CI(`desktop-windows` job)는 런타임을 먼저 빌드하고, 거기서 jar가 없으면 실패한다.
 
 ## 런타임 구성요소
 
@@ -377,11 +395,11 @@ Process supervisor가 어댑터를 띄우는 규칙이다 ([ADR 0003](adr/0003-a
 
 판정은 계획이다. 파일 단위 판정과 이유는 [upstream.md](upstream.md#상속-범위)에만 있다.
 
-- 그대로 쓴다: 픽셀 월드(`webview-ui/src/office/`의 엔진·레이아웃·에디터·스프라이트, `OfficeCanvas.tsx`), `WebSocketTransport`, `core/src/transport.ts` 같은 렌더러 공용 코드.
-- 고쳐 쓴다: 렌더러의 메시지 처리(`useExtensionMessages.ts`, `toolUtils.ts`)와 전송 분기(`transport/index.ts`), 계약(`core/asyncapi.yaml`, ADR 0005), e2e. 계약에는 agents-room 프레임과 명령을 상속 프레임 옆에 더했다. 상속 프레임은 `x-legacy: true`이고, `server/`와 `adapters/vscode/`를 지울 때 함께 지운다.
+- 그대로 쓴다: 픽셀 월드(`webview-ui/src/office/`의 레이아웃·에디터, `OfficeCanvas.tsx`), `WebSocketTransport`, `core/src/transport.ts` 같은 렌더러 공용 코드. 엔진과 스프라이트(`characters.ts`, `officeState.ts`, `renderer.ts`, `types.ts`, `spriteData.ts`)는 데스크톱 캐릭터를 위해 조금 고쳤다 ([데스크톱 렌더러 화면](#데스크톱-렌더러-화면)).
+- 고쳐 쓴다: 렌더러의 메시지 처리(`useExtensionMessages.ts`, `toolUtils.ts`. 데스크톱의 에이전트 처리는 `desktopUi/`가 맡았다. `useExtensionMessages.ts`는 VS Code와 standalone의 메시지와 데스크톱의 에셋 프레임을 처리하고, `toolUtils.ts`의 읽기 Tool 목록은 데스크톱에서 ACP kind로 채운다)와 전송 분기(`transport/index.ts`), 계약(`core/asyncapi.yaml`, ADR 0005), e2e. 계약에는 agents-room 프레임과 명령을 상속 프레임 옆에 더했다. 상속 프레임은 `x-legacy: true`이고, `server/`와 `adapters/vscode/`를 지울 때 함께 지운다.
 - 개념만 옮긴다: `server/`(Node/Fastify)는 Java로 다시 구현하고 상태 저장소, 연결 시 스냅샷, 원자적 저장 같은 구조만 가져온다 ([ADR 0002](adr/0002-java-spring-runtime.md)).
 - 버린다: Claude hooks와 JSONL 처리(`server/src/providers/hook/**`, `fileWatcher.ts`, `transcriptParser.ts`), `adapters/vscode/**`.
-- 새로 만든다: Detail Panel, 권한 대화상자, 에이전트 설정 화면([ux.md](ux.md#화면-구성)), 데스크톱 셸(뼈대는 `desktop/`에 있다), Java 런타임(골격은 `runtime/`에 있다).
+- 새로 만든다: 권한 대화상자, 에이전트 설정 화면([ux.md](ux.md#화면-구성)), 데스크톱 셸(뼈대는 `desktop/`에 있다), Java 런타임(골격은 `runtime/`에 있다). 프로젝트·에이전트 패널과 Detail Panel은 Sprint 0 범위로 만들었다(`webview-ui/src/desktopUi/`).
 
 ## 관련 문서
 

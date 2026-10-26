@@ -18,6 +18,7 @@ const AREA_TO_EPIC: Record<string, string> = {
   'desktop-shell': 'Desktop shell',
   'desktop-runtime': 'Desktop shell with the local runtime',
   'desktop-agent': 'Desktop shell running an agent over ACP',
+  'desktop-ui': 'Desktop panels and pixel world',
 };
 
 /**

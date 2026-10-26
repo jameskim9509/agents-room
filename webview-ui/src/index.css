@@ -8,6 +8,32 @@
   src: url('/fonts/FSPixelSansUnicode-Regular.ttf') format('truetype');
 }
 
+/* Desktop shell panels only (.desktop-type, docs/ux.md 상속한 시각 요소). At one
+   font size FS Pixel Sans draws capitals 0.44 em tall and a system Hangul font
+   draws syllables 0.85 em tall, so Latin read at half the height of the Korean
+   around it. These two faces meet in the middle: the same pixel font a little
+   larger, Hangul a little smaller, syllables about as tall as capitals as in a
+   Hangul font's own Latin. VS Code and standalone keep 'FS Pixel Sans'. */
+@font-face {
+  font-family: 'FS Pixel Sans Desktop';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/FSPixelSansUnicode-Regular.ttf') format('truetype');
+  size-adjust: 140%;
+}
+
+@font-face {
+  font-family: 'Desktop Hangul';
+  font-style: normal;
+  font-weight: 400;
+  src:
+    local('Malgun Gothic'), local('Apple SD Gothic Neo'), local('AppleSDGothicNeo-Regular'),
+    local('Noto Sans KR'), local('NotoSansKR-Regular');
+  size-adjust: 85%;
+  unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7AF, U+D7B0-D7FF;
+}
+
 :root {
   /* Core palette */
   --color-bg: #1e1e2e;
@@ -49,7 +75,13 @@
   /* 1px base so Tailwind spacing maps directly to pixels (pixel-art project) */
   --spacing: 1px;
 
-  --font-pixel: 'FS Pixel Sans', sans-serif;
+  /* FS Pixel Sans has no Hangul glyphs: Korean UI text falls through to a
+     system Hangul font until a Hangul pixel font is chosen (docs/ux.md). */
+  --font-pixel: 'FS Pixel Sans', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+  /* The desktop panels' pair (above); the plain system fonts stay as a fallback. */
+  --font-desktop:
+    'FS Pixel Sans Desktop', 'Desktop Hangul', 'Malgun Gothic', 'Apple SD Gothic Neo',
+    'Noto Sans KR', sans-serif;
 
   /* Text sizes (pixel-art scale, base = 22px) */
   --text-*: initial;
@@ -101,6 +133,17 @@
 }
 
 @layer components {
+  /* Desktop shell panels: the matched font pair, and Korean that breaks between
+     words, not between any two syllables (paths and raw input keep break-all). */
+  .desktop-type {
+    word-break: keep-all;
+    overflow-wrap: break-word;
+  }
+  .desktop-type,
+  .desktop-type * {
+    font-family: var(--font-desktop);
+  }
+
   /* Panel with standard pixel-art border + shadow */
   .pixel-panel {
     @apply bg-bg border-2 border-border rounded-none shadow-pixel;

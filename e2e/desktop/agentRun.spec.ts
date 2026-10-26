@@ -7,10 +7,11 @@
  * start the real codex-acp. The mock runs on the shell's own Electron as Node
  * (AGENTS_ROOM_NODE, ADR 0003 decision 12), as codex-acp would.
  *
- * The project and agent panels come later, so the specs send commands on the
+ * These specs check the frames themselves, so they send commands on the
  * renderer's runtime socket (the `sendRuntimeCommand` test hook) and assert on
  * the frames the renderer's runtime state holds (`getRuntimeState`), the
- * runtime.log and the OS process table.
+ * runtime.log and the OS process table. The panels that show those frames are
+ * driven through the DOM in panels.spec.ts.
  *
  * Needs `npm run runtime:build` (or `runtime:assemble`); without it the suite
  * is skipped locally and fails in CI, which builds the jar first.

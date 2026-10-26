@@ -3,9 +3,15 @@ import { PALETTE_COUNT } from '../../constants.js';
 import { adjustSprite } from '../colorize.js';
 import type { Direction, SpriteData } from '../types.js';
 import { Direction as Dir } from '../types.js';
+import bubbleCancelledData from './bubble-cancelled.json';
+import bubbleErrorData from './bubble-error.json';
 import bubblePermissionData from './bubble-permission.json';
 import bubblePetData from './bubble-pet.json';
 import bubbleWaitingData from './bubble-waiting.json';
+import bubbleWarningData from './bubble-warning.json';
+import iconGenericData from './icon-generic.json';
+import iconSearchData from './icon-search.json';
+import iconTerminalData from './icon-terminal.json';
 
 // ── Speech Bubble Sprites ───────────────────────────────────────
 
@@ -26,6 +32,27 @@ export const BUBBLE_WAITING_SPRITE: SpriteData = resolveBubbleSprite(bubbleWaiti
 
 /** Heart bubble: pet petting feedback (11x13) */
 export const BUBBLE_HEART_SPRITE: SpriteData = resolveBubbleSprite(bubblePetData);
+
+// agents-room desktop (ux.md 상태 어휘, 행동 매핑): run outcomes and errors,
+// and the tool-kind icons drawn in the same bubble frame.
+
+/** Error bubble: red "!" (agent error, failed run) (11x13) */
+export const BUBBLE_ERROR_SPRITE: SpriteData = resolveBubbleSprite(bubbleErrorData);
+
+/** Cancelled bubble: grey "X" (run cancelled) (11x13) */
+export const BUBBLE_CANCELLED_SPRITE: SpriteData = resolveBubbleSprite(bubbleCancelledData);
+
+/** Warning bubble: orange triangle (run refused or limit reached) (11x13) */
+export const BUBBLE_WARNING_SPRITE: SpriteData = resolveBubbleSprite(bubbleWarningData);
+
+/** Search activity: magnifier (11x13) */
+export const ICON_SEARCH_SPRITE: SpriteData = resolveBubbleSprite(iconSearchData);
+
+/** Execute activity: terminal (11x13) */
+export const ICON_TERMINAL_SPRITE: SpriteData = resolveBubbleSprite(iconTerminalData);
+
+/** Generic work: cog, for unknown or unreported tool kinds (11x13) */
+export const ICON_GENERIC_SPRITE: SpriteData = resolveBubbleSprite(iconGenericData);
 
 // ════════════════════════════════════════════════════════════════
 // Loaded character sprites (from PNG assets)
