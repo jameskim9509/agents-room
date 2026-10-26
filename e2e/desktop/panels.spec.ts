@@ -289,6 +289,11 @@ function card(page: DesktopSession['window'], agentId: string) {
   return page.locator(`[data-testid="agent-card"][data-agent-id="${agentId}"]`);
 }
 
+/** The name label above an agent's character; read with `useInnerText` for the text as shown. */
+function label(page: DesktopSession['window'], agentId: string) {
+  return page.locator(`[data-testid="agent-label"][data-agent-id="${agentId}"]`);
+}
+
 test.describe('Desktop panels and pixel world', () => {
   test.skip(
     descriptor === null && !IN_CI,
@@ -365,12 +370,21 @@ test.describe('Desktop panels and pixel world', () => {
     const codexCard = page.getByTestId('agent-card');
     await expect(codexCard).toHaveCount(1);
     await expect(codexCard.getByTestId('agent-card-name')).toHaveText('Codex');
+    // Its name is its harness's ("codex" before any report): said once, the harness in
+    // the name's tooltip (ux.md 에이전트 이름 식별).
+    await expect(codexCard.getByTestId('agent-card-harness')).toHaveCount(0);
+    await expect(codexCard.getByTestId('agent-card-name')).toHaveAttribute(
+      'title',
+      '실행기: codex',
+    );
     await expect(codexCard.getByTestId('agent-card-readiness')).toHaveText('설정 완료');
     await expect(codexCard.getByTestId('agent-card-status')).toHaveText('꺼짐');
     await expect(codexCard.getByRole('button', { name: '에이전트 시작' })).toBeEnabled();
     await expect(codexCard.getByRole('button', { name: '에이전트 종료' })).toBeDisabled();
     const detail = page.getByTestId('detail-panel');
     await expect(detail.getByTestId('detail-agent-name')).toHaveText('Codex');
+    await expect(detail.getByTestId('detail-agent-harness')).toHaveCount(0);
+    await expect(detail.getByTestId('detail-agent-name')).toHaveAttribute('title', '실행기: codex');
     await expect(detail.getByTestId('detail-session-state')).toHaveText('세션 없음');
     await expect(detail.getByTestId('detail-current-tool')).toHaveText('상태 정보 없음');
     await expect(detail.getByTestId('detail-notices')).toHaveText(
@@ -380,9 +394,7 @@ test.describe('Desktop panels and pixel world', () => {
     await expect.poll(async () => (await engineCharacter(page, agentId))?.isOffline).toBe(true);
     const offline = await engineCharacter(page, agentId);
     expect(offline).toMatchObject({ pinnedToSeat: true, isActive: false, bubbleType: null });
-    await expect(
-      page.locator(`[data-testid="agent-label"][data-agent-id="${agentId}"]`),
-    ).toContainText('Codex');
+    await expect(label(page, agentId)).toHaveText('Codex · 꺼짐', { useInnerText: true });
 
     // "연결 확인": the adapter's initialize only, its result on the card (ux.md 설정 상태).
     await codexCard.getByRole('button', { name: '연결 확인' }).click();
@@ -420,10 +432,19 @@ test.describe('Desktop panels and pixel world', () => {
     await expect(other.getByTestId('agent-card-readiness')).toHaveText('지원되지 않음');
     await expect(other.getByRole('button', { name: '에이전트 시작' })).toBeDisabled();
     await expect.poll(async () => (await runtimeCharacters(page)).length).toBe(2);
+    // A name that differs from its harness keeps the badge; Codex's is its harness's (ux.md 에이전트 이름 식별).
+    await expect(label(page, OTHER_ID)).toHaveText('Gemini gemini-cli · 꺼짐', {
+      useInnerText: true,
+    });
+    await expect(other.getByTestId('agent-card-harness')).toHaveText('gemini-cli');
+    await expect(other.getByTestId('agent-card-name')).not.toHaveAttribute('title');
+    await expect(label(page, CODEX_ID)).toHaveText('Codex · 꺼짐', { useInnerText: true });
 
     // A click on a character selects it in the Detail Panel; a card click selects the character.
     await clickCharacter(page, OTHER_ID);
     await expect(detail.getByTestId('detail-agent-name')).toHaveText('Gemini');
+    await expect(detail.getByTestId('detail-agent-harness')).toHaveText('gemini-cli');
+    await expect(detail.getByTestId('detail-agent-name')).not.toHaveAttribute('title');
     await expect(detail.getByTestId('detail-notices')).toContainText(
       '이 실행기는 세부 활동을 제공하지 않습니다',
     );
@@ -453,6 +474,7 @@ test.describe('Desktop panels and pixel world', () => {
     await expect(detail.getByTestId('detail-status')).toHaveText('실행 중', {
       timeout: AGENT_WAIT_MS,
     });
+    await expect(label(page, CODEX_ID)).toHaveText('Codex · 실행 중', { useInnerText: true });
     await expect(detail.getByTestId('detail-plan')).toContainText('Read the README');
 
     // Each tool kind: the Detail Panel's current tool, and the character's tool and icon (ux.md 행동 매핑).
@@ -764,8 +786,15 @@ test.describe('Desktop panels and pixel world', () => {
     await expect
       .poll(async () => (await engineCharacter(page, CODEX_ID))?.bubbleType)
       .toBe('error');
-    // The badge keeps the name the adapter reported, after its session ended (ux.md 에이전트 카드).
-    await expect(card(page, CODEX_ID).getByTestId('agent-card-harness')).toHaveText('Codex');
+    // The harness keeps the name the adapter reported, after its session ended (ux.md 에이전트 카드).
+    // That name is the agent's, so it is the name's tooltip, not a badge (ux.md 에이전트 이름 식별).
+    await expect(card(page, CODEX_ID).getByTestId('agent-card-name')).toHaveAttribute(
+      'title',
+      '실행기: Codex',
+    );
+    await expect(card(page, CODEX_ID).getByTestId('agent-card-harness')).toHaveCount(0);
+    await expect(detail.getByTestId('detail-agent-name')).toHaveAttribute('title', '실행기: Codex');
+    await expect(detail.getByTestId('detail-agent-harness')).toHaveCount(0);
 
     // The IDE keeps running: the agent starts again, as a new session.
     await card(page, CODEX_ID).getByRole('button', { name: '에이전트 시작' }).click();

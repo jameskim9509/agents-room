@@ -1,6 +1,6 @@
 import type { CommandRejected, ConnectionChecked } from '../../../core/src/messages.js';
 import { Button } from '../components/ui/Button.js';
-import { canCheck, canStart, canStop, harnessBadge, STATUS_DOT_CLASS } from './agentControls.js';
+import { agentIdentity, canCheck, canStart, canStop, STATUS_DOT_CLASS } from './agentControls.js';
 import type { AgentView } from './agentView.js';
 import {
   AGENT_STATUS_LABELS,
@@ -53,6 +53,7 @@ export function AgentCard({
   onCheck,
 }: AgentCardProps) {
   const { agent } = view;
+  const identity = agentIdentity(view);
   const guidance = READINESS_GUIDANCE[agent.readiness];
   const checking = check?.pending === true;
   const startable = canStart(view) && !checking;
@@ -86,16 +87,22 @@ export function AgentCard({
             view.status === 'running' ? 'pixel-pulse' : ''
           }`}
         />
-        <span className="text-sm text-text truncate" data-testid="agent-card-name">
-          {agent.name}
-        </span>
         <span
-          className="text-2xs text-text-muted border-2 border-border px-4 shrink-0"
-          title={T.harnessLabel}
-          data-testid="agent-card-harness"
+          className="text-sm text-text truncate"
+          title={identity.nameTitle ?? undefined}
+          data-testid="agent-card-name"
         >
-          {harnessBadge(view)}
+          {identity.name}
         </span>
+        {identity.badge !== null && (
+          <span
+            className="text-2xs text-text-muted border-2 border-border px-4 shrink-0"
+            title={T.harnessLabel}
+            data-testid="agent-card-harness"
+          >
+            {identity.badge}
+          </span>
+        )}
       </button>
       <div className="text-2xs leading-tight">
         <div>
