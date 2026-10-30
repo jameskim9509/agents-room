@@ -7,13 +7,13 @@ import agentsroom.contract.AgentErrorEvent;
 import agentsroom.contract.AgentEvent;
 import agentsroom.contract.AgentEventMessage;
 import agentsroom.contract.AgentInfo;
+import agentsroom.contract.AgentMessageChunkEvent;
 import agentsroom.contract.AgentStartingEvent;
 import agentsroom.contract.AgentStatus;
 import agentsroom.contract.AgentStatusChangedEvent;
 import agentsroom.contract.AuthMethodInfo;
 import agentsroom.contract.AuthStatus;
 import agentsroom.contract.ErrorCode;
-import agentsroom.contract.MessageChunkData;
 import agentsroom.contract.PermissionOption;
 import agentsroom.contract.PermissionOptionKind;
 import agentsroom.contract.PermissionOutcome;
@@ -23,6 +23,7 @@ import agentsroom.contract.Readiness;
 import agentsroom.contract.RejectReason;
 import agentsroom.contract.RunEndedEvent;
 import agentsroom.contract.RunOutcome;
+import agentsroom.contract.RunStartedEvent;
 import agentsroom.contract.ServerMessage;
 import agentsroom.contract.SessionEndReason;
 import agentsroom.contract.SessionEndedEvent;
@@ -37,6 +38,7 @@ import agentsroom.runtime.acp.OpenedSession;
 import agentsroom.runtime.acp.PermissionAnswer;
 import agentsroom.runtime.acp.PermissionAsk;
 import agentsroom.runtime.agent.AgentConfig;
+import agentsroom.runtime.harness.ElectronAsNodePreload;
 import agentsroom.runtime.harness.HarnessLauncher;
 import agentsroom.runtime.permission.PermissionBroker;
 import java.nio.file.Path;
@@ -192,12 +194,62 @@ class AgentControllerTests {
 
         first.listener.onUpdate(first.sessionId, chunk("from the old process"), 0);
         second.listener.onUpdate(second.sessionId, chunk("from the new process"), 0);
-        awaitEvent(agentsroom.contract.AgentMessageChunkEvent.class, event -> true);
+        awaitEvent(AgentMessageChunkEvent.class, event -> true);
 
         List<AgentEvent> after = events().subList(before, events().size());
         assertThat(after).singleElement().satisfies(event -> assertThat(
-                ((agentsroom.contract.AgentMessageChunkEvent) event).getData().getText())
+                ((AgentMessageChunkEvent) event).getData().getText())
                 .isEqualTo("from the new process"));
+    }
+
+    /**
+     * ADR 0005 decision 11: the start of a key at the end of a chunk is held back; the next event of the
+     * agent takes it first, in its own chunk event, so the text keeps its place in seq order.
+     */
+    @Test
+    void aHeldStartOfAKeyGoesOutBeforeTheNextEventInSeqOrder() throws Exception {
+        FakeConnection connection = startReady();
+        controller.sendPrompt("go", this::reject);
+        awaitStatus(AgentStatus.RUNNING);
+        int before = events().size();
+
+        connection.listener.onUpdate(connection.sessionId, chunk("the key sk-moc"), 1);
+        connection.prompt.complete("end_turn");
+        awaitEvent(RunEndedEvent.class, event -> true);
+
+        List<AgentEvent> after = events().subList(before, events().size());
+        assertThat(after).extracting(event -> event.getClass().getSimpleName()).startsWith("AgentMessageChunkEvent",
+                "AgentMessageChunkEvent", "RunEndedEvent");
+        assertThat(after.subList(0, 2)).extracting(event ->
+                ((AgentMessageChunkEvent) event).getData().getText())
+                .containsExactly("the key ", "sk-moc");
+        assertThat(after.get(1).getRunId()).as("still the run's text").isEqualTo(after.get(2).getRunId());
+        assertThat(seqs()).isSorted().doesNotHaveDuplicates();
+    }
+
+    /**
+     * Text an adapter sends between runs is no run's: a start it held back goes out before the next run
+     * starts, without that run's id, and the run's own text starts a new stream.
+     */
+    @Test
+    void textHeldBackBetweenRunsGoesOutBeforeTheNextRunAndOutsideIt() throws Exception {
+        FakeConnection connection = startReady();
+        int before = events().size();
+
+        connection.listener.onUpdate(connection.sessionId, chunk("between runs sk-moc"), 1);
+        awaitEvent(AgentMessageChunkEvent.class, event -> event.getData().getText().equals("between runs "));
+        controller.sendPrompt("go", this::reject);
+        RunStartedEvent started = awaitEvent(RunStartedEvent.class, event -> true);
+        connection.listener.onUpdate(connection.sessionId, chunk("kmockmock"), 2);
+        awaitEvent(AgentMessageChunkEvent.class, event -> event.getData().getText().equals("kmockmock"));
+
+        List<AgentEvent> after = events().subList(before, events().size());
+        assertThat(after).extracting(event -> event.getClass().getSimpleName()).startsWith("AgentMessageChunkEvent",
+                "AgentMessageChunkEvent", "RunStartedEvent");
+        assertThat(((AgentMessageChunkEvent) after.get(1)).getData().getText()).isEqualTo("sk-moc");
+        assertThat(after.get(1).getRunId()).as("held before the run").isNull();
+        assertThat(after.getLast().getRunId()).isEqualTo(started.getRunId());
+        assertThat(seqs()).isSorted().doesNotHaveDuplicates();
     }
 
     @Test
@@ -389,7 +441,8 @@ class AgentControllerTests {
 
     private AgentController newController() {
         HarnessLauncher launcher = new HarnessLauncher(
-                Map.of(HarnessLauncher.CODEX_COMMAND, "[\"fake-adapter\"]")::get, project);
+                Map.of(HarnessLauncher.CODEX_COMMAND, "[\"fake-adapter\"]")::get, project,
+                new ElectronAsNodePreload(project.resolve("preload")));
         AgentTimeouts timeouts = new AgentTimeouts(Duration.ofSeconds(5), Duration.ofMillis(300), Duration.ofSeconds(5),
                 Duration.ofSeconds(5), Duration.ofMillis(300), Duration.ofSeconds(1));
         StatePublisher publisher = change -> {
@@ -514,10 +567,7 @@ class AgentControllerTests {
     }
 
     private static AgentUpdate chunk(String text) {
-        MessageChunkData data = new MessageChunkData();
-        data.setContentType("text");
-        data.setText(text);
-        return new AgentUpdate.Chunk(AgentUpdate.ChunkKind.AGENT, data);
+        return new AgentUpdate.Chunk(AgentUpdate.ChunkKind.AGENT, null, "text", text);
     }
 
     private static PermissionAsk ask() {

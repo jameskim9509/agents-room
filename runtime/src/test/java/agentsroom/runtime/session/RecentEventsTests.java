@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import agentsroom.contract.AgentEvent;
 import agentsroom.contract.AgentMessageChunkEvent;
-import agentsroom.contract.MessageChunkData;
 import agentsroom.contract.Stage;
 import agentsroom.runtime.acp.AgentUpdate.ChunkKind;
 import java.util.List;
@@ -60,19 +59,14 @@ class RecentEventsTests {
     }
 
     @Test
-    void masksASecretSplitAcrossChunks() {
-        String key = String.join("-", "sk", "abcdefghijklmnop");
-        recent.add(chunk(ChunkKind.AGENT, "m1", "run", "key " + key.substring(0, 5)));
-        recent.add(chunk(ChunkKind.AGENT, "m1", "run", key.substring(5) + " end"));
+    void theJoinedTextIsTheLiveTextsAsTheyWereSent() {
+        // The chunk seams masked the live texts already (ADR 0005 decision 11): the tail adds nothing.
+        recent.add(chunk(ChunkKind.AGENT, "m1", "run", "key "));
+        recent.add(chunk(ChunkKind.AGENT, "m1", "run", "**** end"));
+        recent.add(chunk(ChunkKind.AGENT, "m1", "run", " token=x"));
 
         String text = ((AgentMessageChunkEvent) recent.list().getFirst()).getData().getText();
-        assertThat(text).isEqualTo("key **** end").doesNotContain(key);
-    }
-
-    @Test
-    void joiningALongReplyMasksOnlyAroundTheJoin() {
-        String start = "x".repeat(RecentEvents.JOIN_WINDOW * 3);
-        assertThat(RecentEvents.joinMasked(start, "y")).isEqualTo(start + "y");
+        assertThat(text).isEqualTo("key **** end token=x");
     }
 
     @Test
@@ -88,11 +82,7 @@ class RecentEventsTests {
     }
 
     private AgentEvent chunk(ChunkKind kind, String messageId, String runId, String text) {
-        MessageChunkData data = new MessageChunkData();
-        data.setMessageId(messageId);
-        data.setContentType("text");
-        data.setText(text);
-        return envelope(AgentEvents.chunk(kind, data), runId);
+        return envelope(AgentEvents.chunk(kind, messageId, "text", text), runId);
     }
 
     private AgentEvent envelope(AgentEvent event, String runId) {

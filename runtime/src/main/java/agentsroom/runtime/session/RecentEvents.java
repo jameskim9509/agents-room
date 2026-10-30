@@ -5,7 +5,6 @@ import agentsroom.contract.AgentMessageChunkEvent;
 import agentsroom.contract.AgentThoughtChunkEvent;
 import agentsroom.contract.MessageChunkData;
 import agentsroom.contract.UserMessageChunkEvent;
-import agentsroom.runtime.acp.AdapterValues;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -19,8 +18,8 @@ import java.util.Objects;
  *   <li>Thought chunks are left out: they are live only (ux.md, SCRUM-16).
  *   <li>Consecutive text chunks of one kind and one {@code messageId} (or, when that is absent, of one
  *       run) become one event with the joined text and the last chunk's {@code seq} and
- *       {@code receivedAt}. The joined text is masked again, so a secret split across two chunks is
- *       caught in the tail.
+ *       {@code receivedAt}. The texts are already masked across the chunk seams (ADR 0005 decision 11),
+ *       so the joined text is exactly what the live events showed, one after the other.
  * </ul>
  */
 final class RecentEvents {
@@ -28,9 +27,6 @@ final class RecentEvents {
     static final int LIMIT = 200;
 
     private static final String TEXT = "text";
-
-    /** Longer than any key or token the masking layer recognizes. */
-    static final int JOIN_WINDOW = 4096;
 
     private final Deque<AgentEvent> events = new ArrayDeque<>();
 
@@ -74,7 +70,7 @@ final class RecentEvents {
         MessageChunkData data = new MessageChunkData();
         data.setMessageId(textChunk(next).getMessageId());
         data.setContentType(TEXT);
-        data.setText(joinMasked(textChunk(last).getText(), textChunk(next).getText()));
+        data.setText(textChunk(last).getText() + textChunk(next).getText());
         AgentEvent merged;
         if (next instanceof UserMessageChunkEvent) {
             UserMessageChunkEvent user = new UserMessageChunkEvent();
@@ -92,16 +88,6 @@ final class RecentEvents {
         merged.setSeq(next.getSeq());
         merged.setReceivedAt(next.getReceivedAt());
         return merged;
-    }
-
-    /**
-     * {@code previous + next}, masked again around the join, where a secret split across two chunks
-     * shows. Only the last {@value #JOIN_WINDOW} characters of {@code previous} are masked again (they
-     * were masked once already), so a long reply costs linear time, not quadratic.
-     */
-    static String joinMasked(String previous, String next) {
-        int keep = Math.max(0, previous.length() - JOIN_WINDOW);
-        return previous.substring(0, keep) + AdapterValues.text(previous.substring(keep) + next);
     }
 
     /** The data of a user or agent text chunk, else {@code null}. */

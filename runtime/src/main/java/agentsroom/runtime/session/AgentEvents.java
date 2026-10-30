@@ -127,7 +127,12 @@ final class AgentEvents {
         return event;
     }
 
-    static AgentEvent chunk(AgentUpdate.ChunkKind kind, MessageChunkData data) {
+    /** A chunk event; {@code text} must already be masked (the chunk seams do that). */
+    static AgentEvent chunk(AgentUpdate.ChunkKind kind, String messageId, String contentType, String text) {
+        MessageChunkData data = new MessageChunkData();
+        data.setMessageId(messageId);
+        data.setContentType(contentType);
+        data.setText(text);
         return switch (kind) {
             case USER -> {
                 UserMessageChunkEvent event = new UserMessageChunkEvent();

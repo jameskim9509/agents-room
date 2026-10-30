@@ -1,5 +1,6 @@
 package agentsroom.runtime.acp;
 
+import agentsroom.runtime.process.ChildProcessContainment;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -22,7 +23,9 @@ import java.util.concurrent.TimeUnit;
  * <p>A sign-in is the exception. codex-acp opens the ChatGPT login page from the adapter's own process
  * (on Windows through PowerShell's {@code Start}), so a browser that was not running yet starts as the
  * adapter's descendant. Once a sign-in began ({@link #spareBrowsers}), web browsers are neither recorded
- * nor killed: the user's browser, with all its windows, must outlive a stop or a failed sign-in.
+ * nor killed, and neither is a process the sign-in released from the runtime's job (Windows,
+ * {@link ChildProcessContainment#isReleased}): the user's browser, with all its windows, must outlive a
+ * stop or a failed sign-in.
  */
 final class ProcessTreeWatch {
 
@@ -49,11 +52,14 @@ final class ProcessTreeWatch {
                 : SCHEDULER.scheduleWithFixedDelay(this::collect, 0, INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
 
-    /** From now on, web browsers in the tree are left alone: a sign-in may have opened one. */
+    /**
+     * From now on, web browsers and released processes in the tree are left alone: a sign-in may have
+     * opened one.
+     */
     void spareBrowsers() {
         spareBrowsers = true;
         synchronized (this) {
-            seen.removeIf(ProcessTreeWatch::isWebBrowser);
+            seen.removeIf(handle -> !killable(handle));
         }
     }
 
@@ -103,7 +109,7 @@ final class ProcessTreeWatch {
     }
 
     private boolean killable(ProcessHandle handle) {
-        return !spareBrowsers || !isWebBrowser(handle);
+        return !spareBrowsers || !(isWebBrowser(handle) || ChildProcessContainment.isReleased(handle));
     }
 
     private static boolean isWebBrowser(ProcessHandle handle) {

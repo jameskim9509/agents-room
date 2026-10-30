@@ -120,22 +120,64 @@ class HarnessLauncherTests {
                         "installed adapter " + HarnessLauncher.ADAPTERS_FOLDER));
 
         variables.put(HarnessLauncher.NODE_ELECTRON, "1");
+        // The preload keeps ELECTRON_RUN_AS_NODE to the adapter's own Node processes (ADR 0003 decision 12).
+        Path preload = root.resolve("data").resolve(ElectronAsNodePreload.FILE_NAME);
         assertThat(launcher.resolve(HarnessLauncher.CODEX))
-                .isEqualTo(new HarnessLaunch.Ready(List.of(electron.toString(), script.toString()),
-                        "installed adapter " + HarnessLauncher.ADAPTERS_FOLDER,
+                .isEqualTo(new HarnessLaunch.Ready(List.of(electron.toString(), "--require", preload.toString(),
+                        script.toString()), "installed adapter " + HarnessLauncher.ADAPTERS_FOLDER,
                         Map.of("ELECTRON_RUN_AS_NODE", "1")));
+        assertThat(Files.readString(preload, StandardCharsets.UTF_8)).contains("delete process.env[VARIABLE]");
 
         // An override on the same file (spelt differently) runs as Node too; one on another node does not.
         String sameFile = root.resolve(".").resolve(electron.getFileName()).toString();
-        variables.put(HarnessLauncher.CODEX_COMMAND, JSON.writeValueAsString(List.of(sameFile, "mock.cjs")));
-        assertThat(launcher.resolve(HarnessLauncher.CODEX)).isInstanceOfSatisfying(HarnessLaunch.Ready.class,
-                ready -> assertThat(ready.environment()).containsExactly(Map.entry("ELECTRON_RUN_AS_NODE", "1")));
+        variables.put(HarnessLauncher.CODEX_COMMAND,
+                JSON.writeValueAsString(List.of(sameFile, "mock.cjs", "--scenario", "happy")));
+        assertThat(launcher.resolve(HarnessLauncher.CODEX)).isInstanceOfSatisfying(HarnessLaunch.Ready.class, ready -> {
+            assertThat(ready.argv()).containsExactly(sameFile, "--require", preload.toString(), "mock.cjs",
+                    "--scenario", "happy");
+            assertThat(ready.environment()).containsExactly(Map.entry("ELECTRON_RUN_AS_NODE", "1"));
+        });
         variables.put(HarnessLauncher.CODEX_COMMAND, JSON.writeValueAsString(List.of(node.toString(), "mock.cjs")));
-        assertThat(launcher.resolve(HarnessLauncher.CODEX)).isInstanceOfSatisfying(HarnessLaunch.Ready.class,
-                ready -> assertThat(ready.environment()).isEmpty());
+        assertThat(launcher.resolve(HarnessLauncher.CODEX)).isInstanceOfSatisfying(HarnessLaunch.Ready.class, ready -> {
+            assertThat(ready.argv()).as("a plain node gets no preload").containsExactly(node.toString(), "mock.cjs");
+            assertThat(ready.environment()).isEmpty();
+        });
         variables.put(HarnessLauncher.CODEX_COMMAND, "[\"node\", \"mock.cjs\"]");
         assertThat(launcher.resolve(HarnessLauncher.CODEX)).as("a bare name is not compared")
                 .isInstanceOfSatisfying(HarnessLaunch.Ready.class, ready -> assertThat(ready.environment()).isEmpty());
+    }
+
+    @Test
+    void thePreloadIsWrittenOnceAndRewrittenWhenChanged() throws IOException {
+        ElectronAsNodePreload preload = new ElectronAsNodePreload(root.resolve("data"));
+
+        Path file = preload.file();
+        String content = Files.readString(file, StandardCharsets.UTF_8);
+        Files.writeString(file, "tampered", StandardCharsets.UTF_8);
+
+        assertThat(preload.file()).isEqualTo(file);
+        assertThat(Files.readString(file, StandardCharsets.UTF_8)).isEqualTo(content);
+        assertThat(new ElectronAsNodePreload(root.resolve("data")).file()).as("another runtime finds it in place")
+                .isEqualTo(file);
+    }
+
+    @Test
+    void aPreloadThatCannotBeWrittenLeavesTheLaunchAsBefore() throws IOException {
+        Path script = installAdapter();
+        Path electron = Files.writeString(root.resolve(WINDOWS ? "electron.exe" : "electron"), "",
+                StandardCharsets.UTF_8);
+        electron.toFile().setExecutable(true);
+        variables.put(HarnessLauncher.NODE, electron.toString());
+        variables.put(HarnessLauncher.NODE_ELECTRON, "1");
+        variables.put(HarnessLauncher.ADAPTERS_DIR, adapters.toString());
+        // A file where the directory should be.
+        Path blocked = Files.writeString(root.resolve("blocked"), "", StandardCharsets.UTF_8);
+
+        HarnessLaunch launch = new HarnessLauncher(variables::get, root, new ElectronAsNodePreload(blocked))
+                .resolve(HarnessLauncher.CODEX);
+
+        assertThat(launch).isEqualTo(new HarnessLaunch.Ready(List.of(electron.toString(), script.toString()),
+                "installed adapter " + HarnessLauncher.ADAPTERS_FOLDER, Map.of("ELECTRON_RUN_AS_NODE", "1")));
     }
 
     @Test
@@ -175,6 +217,6 @@ class HarnessLauncherTests {
     }
 
     private HarnessLauncher launcher(Path codeLocation) {
-        return new HarnessLauncher(variables::get, codeLocation);
+        return new HarnessLauncher(variables::get, codeLocation, new ElectronAsNodePreload(root.resolve("data")));
     }
 }

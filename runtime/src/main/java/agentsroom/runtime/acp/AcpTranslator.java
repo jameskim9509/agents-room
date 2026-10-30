@@ -5,7 +5,6 @@ import agentsroom.contract.AuthMethodInfo;
 import agentsroom.contract.AuthStatus;
 import agentsroom.contract.AvailableCommand;
 import agentsroom.contract.Cost;
-import agentsroom.contract.MessageChunkData;
 import agentsroom.contract.PermissionOption;
 import agentsroom.contract.PermissionOptionKind;
 import agentsroom.contract.PlanEntry;
@@ -28,7 +27,8 @@ import org.slf4j.LoggerFactory;
  * Turns ACP Java SDK records into the port's values (ADR 0003 decision 4): the only class above the
  * transport that knows the SDK's schema types. Every adapter-derived string is masked here
  * ({@link AdapterValues}); ids (session, tool call, permission option) stay as received, because they
- * are opaque keys the runtime must hand back.
+ * are opaque keys the runtime must hand back. A chunk's text is the one exception: only the session sees
+ * the chunks before it, so it masks that text across the chunk seams (ADR 0005 decision 11).
  */
 final class AcpTranslator {
 
@@ -48,12 +48,11 @@ final class AcpTranslator {
 
     AgentUpdate update(AcpSchema.SessionUpdate update) {
         return switch (update) {
-            case AcpSchema.UserMessageChunk chunk ->
-                    new AgentUpdate.Chunk(AgentUpdate.ChunkKind.USER, chunk(chunk.content(), chunk.messageId()));
+            case AcpSchema.UserMessageChunk chunk -> chunk(AgentUpdate.ChunkKind.USER, chunk.content(), chunk.messageId());
             case AcpSchema.AgentMessageChunk chunk ->
-                    new AgentUpdate.Chunk(AgentUpdate.ChunkKind.AGENT, chunk(chunk.content(), chunk.messageId()));
+                    chunk(AgentUpdate.ChunkKind.AGENT, chunk.content(), chunk.messageId());
             case AcpSchema.AgentThoughtChunk chunk ->
-                    new AgentUpdate.Chunk(AgentUpdate.ChunkKind.THOUGHT, chunk(chunk.content(), chunk.messageId()));
+                    chunk(AgentUpdate.ChunkKind.THOUGHT, chunk.content(), chunk.messageId());
             case AcpSchema.ToolCall call -> new AgentUpdate.ToolCallReport(true, call.toolCallId(),
                     AdapterValues.text(call.title()), kind(call.kind()), status(call.status()), content(call.content()),
                     locations(call.locations()), AdapterValues.tree(json(call.rawInput())),
@@ -155,23 +154,21 @@ final class AcpTranslator {
                 AdapterValues.tree(json(rawOutput)), AdapterValues.object(meta));
     }
 
-    private static MessageChunkData chunk(AcpSchema.ContentBlock content, String messageId) {
-        MessageChunkData data = new MessageChunkData();
-        data.setMessageId(messageId);
-        switch (content) {
-            case AcpSchema.TextContent text -> {
-                data.setContentType("text");
-                data.setText(AdapterValues.text(text.text() == null ? "" : text.text()));
-            }
-            case AcpSchema.ImageContent ignored -> data.setContentType("image");
-            case AcpSchema.AudioContent ignored -> data.setContentType("audio");
-            case AcpSchema.ResourceLink ignored -> data.setContentType("resource_link");
-            case AcpSchema.Resource ignored -> data.setContentType("resource");
-            case AcpSchema.UnknownContentBlock unknown -> data.setContentType(typeName(unknown.type()));
-            case null -> data.setContentType("unknown");
-            default -> data.setContentType("unknown");
-        }
-        return data;
+    /** The text stays raw: the session masks it across the chunk seams (ADR 0005 decision 11). */
+    private static AgentUpdate.Chunk chunk(AgentUpdate.ChunkKind kind, AcpSchema.ContentBlock content,
+            String messageId) {
+        return switch (content) {
+            case AcpSchema.TextContent text ->
+                    new AgentUpdate.Chunk(kind, messageId, "text", text.text() == null ? "" : text.text());
+            case AcpSchema.ImageContent ignored -> new AgentUpdate.Chunk(kind, messageId, "image", null);
+            case AcpSchema.AudioContent ignored -> new AgentUpdate.Chunk(kind, messageId, "audio", null);
+            case AcpSchema.ResourceLink ignored -> new AgentUpdate.Chunk(kind, messageId, "resource_link", null);
+            case AcpSchema.Resource ignored -> new AgentUpdate.Chunk(kind, messageId, "resource", null);
+            case AcpSchema.UnknownContentBlock unknown ->
+                    new AgentUpdate.Chunk(kind, messageId, typeName(unknown.type()), null);
+            case null -> new AgentUpdate.Chunk(kind, messageId, "unknown", null);
+            default -> new AgentUpdate.Chunk(kind, messageId, "unknown", null);
+        };
     }
 
     private List<Map<String, Object>> content(List<AcpSchema.ToolCallContent> content) {

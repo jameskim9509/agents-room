@@ -79,7 +79,8 @@ public class ShellLinkConfiguration {
     }
 
     /**
-     * On an orderly exit, kills every live descendant. A process whose parent already exited is no
+     * On an orderly exit, kills every live descendant but the ones a sign-in released (the user's
+     * browser, {@link ChildProcessContainment#isReleased}). A process whose parent already exited is no
      * longer a descendant: on Windows the job object of {@link ChildProcessContainment} kills it when the
      * runtime process ends; elsewhere it can be left running.
      */

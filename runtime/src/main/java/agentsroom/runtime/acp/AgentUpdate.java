@@ -1,7 +1,6 @@
 package agentsroom.runtime.acp;
 
 import agentsroom.contract.AvailableCommand;
-import agentsroom.contract.MessageChunkData;
 import agentsroom.contract.PlanEntry;
 import agentsroom.contract.SessionInfoData;
 import agentsroom.contract.ToolCallLocation;
@@ -13,8 +12,9 @@ import java.util.Map;
 
 /**
  * One ACP {@code session/update}, translated at the port (ADR 0003 decision 4): no SDK type passes it,
- * and every adapter-derived string in it is already masked (ADR 0004 decision 8). Each variant maps to
- * one content kind of ADR 0005; an update the SDK does not model is {@link Unknown}.
+ * and every adapter-derived string in it is already masked (ADR 0004 decision 8), except a chunk's text
+ * ({@link Chunk}). Each variant maps to one content kind of ADR 0005; an update the SDK does not model is
+ * {@link Unknown}.
  */
 public sealed interface AgentUpdate {
 
@@ -23,8 +23,18 @@ public sealed interface AgentUpdate {
         USER, AGENT, THOUGHT
     }
 
-    /** {@code user_message_chunk}, {@code agent_message_chunk}, {@code agent_thought_chunk}. */
-    record Chunk(ChunkKind kind, MessageChunkData data) implements AgentUpdate {
+    /**
+     * {@code user_message_chunk}, {@code agent_message_chunk}, {@code agent_thought_chunk}.
+     *
+     * <p>The one value that is not masked at the port: a secret can be split across chunks, so the text
+     * is masked across the chunk seams of its message before any event carries it (the session's chunk
+     * seams, ADR 0005 decision 11). Never put it into a frame as it is.
+     *
+     * @param messageId the adapter's message id, as received, or {@code null}
+     * @param contentType the ACP content block type ({@code text}, {@code image}, ...)
+     * @param text the raw text of a {@code text} block, else {@code null}
+     */
+    record Chunk(ChunkKind kind, String messageId, String contentType, String text) implements AgentUpdate {
     }
 
     /** {@code plan}: the whole plan, replacing the previous one. */

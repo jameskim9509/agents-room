@@ -1,6 +1,7 @@
 package agentsroom.runtime.session;
 
 import agentsroom.contract.AgentErrorData;
+import agentsroom.contract.AgentErrorEvent;
 import agentsroom.contract.AgentEvent;
 import agentsroom.contract.AgentEventMessage;
 import agentsroom.contract.AgentSnapshot;
@@ -18,13 +19,17 @@ import agentsroom.contract.PlanEntry;
 import agentsroom.contract.Readiness;
 import agentsroom.contract.RejectReason;
 import agentsroom.contract.RunEndedData;
+import agentsroom.contract.RunEndedEvent;
 import agentsroom.contract.RunOutcome;
+import agentsroom.contract.RunStartedEvent;
 import agentsroom.contract.ServerMessage;
 import agentsroom.contract.SessionEndReason;
 import agentsroom.contract.SessionEndedData;
+import agentsroom.contract.SessionEndedEvent;
 import agentsroom.contract.SessionInfoData;
 import agentsroom.contract.SessionSnapshot;
 import agentsroom.contract.SessionStartedData;
+import agentsroom.contract.SessionStartedEvent;
 import agentsroom.contract.Stage;
 import agentsroom.contract.ToolCallState;
 import agentsroom.contract.UnfinishedToolCall;
@@ -95,6 +100,9 @@ final class AgentController {
     /** Updates that arrive before the session/new answer is handled wait at most this many. */
     private static final int EARLY_UPDATE_LIMIT = 256;
 
+    /** The content type of a text chunk. */
+    private static final String TEXT = "text";
+
     /**
      * A call that failed because the connection is gone waits this long for the exit report, which
      * carries the exit code, before it ends the agent itself.
@@ -114,6 +122,7 @@ final class AgentController {
     private AgentStatus status = AgentStatus.OFFLINE;
     private long lastSeq;
     private final RecentEvents recent = new RecentEvents();
+    private final ChunkSeams seams = new ChunkSeams();
 
     private int generation;
     /** Whether the current generation's process is up (not failed, not past the stop's close). */
@@ -483,6 +492,7 @@ final class AgentController {
         }
         long now = now();
         publish(frames -> {
+            releaseHeldText(frames, true);
             sessionId = opened.sessionId();
             session = new SessionView();
             session.agentInfo = handshake == null ? null : handshake.agentInfo();
@@ -516,6 +526,8 @@ final class AgentController {
         Run started = new Run(UUID.randomUUID().toString());
         long now = now();
         publish(frames -> {
+            // Text held back between runs goes out first, outside the run (no runId of the new one).
+            releaseHeldText(frames, true);
             run = started;
             prompt = AdapterValues.text(text);
             lastRun = null;
@@ -621,7 +633,7 @@ final class AgentController {
     /** One session/update as its content event (ADR 0005 kind table), and into the snapshot state. */
     private void apply(List<ServerMessage> frames, AgentUpdate update, long at) {
         switch (update) {
-            case AgentUpdate.Chunk chunk -> emit(frames, AgentEvents.chunk(chunk.kind(), chunk.data()), at);
+            case AgentUpdate.Chunk chunk -> emitChunk(frames, chunk, at);
             case AgentUpdate.ToolCallReport report -> {
                 Map<String, ToolCallState> calls = run != null ? run.toolCalls : lastRunToolCalls;
                 ToolCallState merged = ToolCalls.merge(calls.get(report.toolCallId()), report);
@@ -1092,8 +1104,50 @@ final class AgentController {
         emit(frames, AgentEvents.statusChanged(next, previous), at);
     }
 
-    /** Sets the envelope and queues the frame; {@code seq} counts from 1 per agent (ADR 0005 decision 1). */
+    /**
+     * Emits an event that is not a text chunk. The text chunks held back so far go out first, masked as
+     * they stand, so that no text passes an event that came after it (ADR 0005 decision 11).
+     */
     private void emit(List<ServerMessage> frames, AgentEvent event, long receivedAt) {
+        releaseHeldText(frames, endsTextStreams(event));
+        send(frames, event, receivedAt);
+    }
+
+    /**
+     * Sends the text chunks held back so far, masked as they stand, with the envelope of now (the run and
+     * session they arrived in, when called before either changes).
+     *
+     * @param end whether the text streams end here (a run or session boundary)
+     */
+    private void releaseHeldText(List<ServerMessage> frames, boolean end) {
+        for (ChunkSeams.Text held : seams.flush(end)) {
+            send(frames, AgentEvents.chunk(held.kind(), held.messageId(), TEXT, held.text()), held.receivedAt());
+        }
+    }
+
+    /**
+     * A chunk: its text is masked across the seams of its message first, which may hold back the start of
+     * a secret (then less text goes out, or no event). A chunk without text is like any other event.
+     */
+    private void emitChunk(List<ServerMessage> frames, AgentUpdate.Chunk chunk, long receivedAt) {
+        if (chunk.text() == null) {
+            emit(frames, AgentEvents.chunk(chunk.kind(), chunk.messageId(), chunk.contentType(), null), receivedAt);
+            return;
+        }
+        for (ChunkSeams.Text ready : seams.accept(chunk.kind(), chunk.messageId(), chunk.text(), receivedAt)) {
+            send(frames, AgentEvents.chunk(ready.kind(), ready.messageId(), TEXT, ready.text()), ready.receivedAt());
+        }
+    }
+
+    /** Run and session boundaries end the text streams: a later message never continues an earlier one. */
+    private static boolean endsTextStreams(AgentEvent event) {
+        return event instanceof RunStartedEvent || event instanceof RunEndedEvent
+                || event instanceof SessionStartedEvent || event instanceof SessionEndedEvent
+                || event instanceof AgentErrorEvent;
+    }
+
+    /** Sets the envelope and queues the frame; {@code seq} counts from 1 per agent (ADR 0005 decision 1). */
+    private void send(List<ServerMessage> frames, AgentEvent event, long receivedAt) {
         event.setProjectId(agent.projectId());
         event.setAgentId(agent.agentId());
         event.setSessionId(sessionId);

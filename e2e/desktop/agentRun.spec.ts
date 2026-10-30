@@ -1,6 +1,7 @@
 /**
  * Desktop shell + the real local runtime + the mock ACP agent: one Codex run
- * end to end (SCRUM-23, 22, 31). The shell launches the runtime jar as in
+ * end to end (SCRUM-23, 22, 31), who sees ELECTRON_RUN_AS_NODE (SCRUM-23), and
+ * the sign-in browser that outlives the app (SCRUM-65). The shell launches the runtime jar as in
  * development; the runtime starts its seeded Codex agent as the mock agent
  * (e2e/desktop/fixtures/mock-acp-agent.cjs) through
  * AGENTS_ROOM_HARNESS_CODEX_COMMAND, with AGENTS_ROOM_E2E=1 so it can never
@@ -29,6 +30,7 @@ import {
   enableTestHooks,
   eventsOfKind,
   expectOfficeConnected,
+  isProcessAlive,
   javaProcessesRunning,
   type MockAgentScenario,
   processesWithArgument,
@@ -110,6 +112,27 @@ const ONE_TURN: MockAgentScenario = {
 const CRASH_MID_RUN: MockAgentScenario = { extends: 'crash-mid-run' };
 
 /**
+ * One turn whose tool call reports who sees ELECTRON_RUN_AS_NODE: the mock, a
+ * command it runs, and a child it starts on its own executable with its own
+ * environment (as codex-acp starts Codex), with that child's command.
+ */
+const PROBE_RUN_AS_NODE: MockAgentScenario = { extends: 'probe-run-as-node' };
+
+/**
+ * Logged out, so starting signs in: the sign-in "opens the login page" like
+ * codex-acp on Windows, through a launcher that starts a long-lived browser
+ * stand-in (a sleeping node) detached and exits. The mock also starts a child
+ * at once (as codex-acp starts Codex) and one during the turn; the launch sets
+ * the file it reports their pids in.
+ */
+const SIGN_IN_WITH_BROWSER: MockAgentScenario = {
+  extends: 'auth-required',
+  childAtStart: true,
+  browserStandIn: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
+  prompts: [{ stopReason: 'end_turn', steps: [{ spawnChild: true }] }],
+};
+
+/**
  * Launches the shell on the real runtime with the mock agent, waits for the
  * renderer's first snapshot with the test hooks on, opens a scratch project
  * through the stubbed folder picker and returns the seeded agent's id.
@@ -156,6 +179,28 @@ async function openProjectWithAgent(
   return { agentId: state!.agents[0].agentId, projectPath: folder };
 }
 
+/** Sends a prompt and waits for its run to end. */
+async function runOnePrompt(page: DesktopSession['window'], agentId: string, text: string) {
+  const ended = async () =>
+    eventsOfKind(agentEvents(await rendererRuntimeState(page), agentId), 'runEnded').length;
+  const before = await ended();
+  await sendRuntimeCommand(page, { type: 'sendPrompt', agentId, text });
+  await expect.poll(ended, { timeout: AGENT_WAIT_MS }).toBe(before + 1);
+}
+
+/** The pid file of the sign-in spec's mock, for the stand-in's cleanup. */
+let signInPidFile: string | null = null;
+
+/** The `<role> <pid>` lines the mock wrote to its pid file, by role. */
+function readMockPids(file: string): Record<string, number> {
+  const pids: Record<string, number> = {};
+  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const [role, pid] = line.split(' ');
+    if (role && pid) pids[role] = Number(pid);
+  }
+  return pids;
+}
+
 async function waitForStatus(page: DesktopSession['window'], agentId: string, status: string) {
   await expect
     .poll(async () => agentStatus(await rendererRuntimeState(page), agentId), {
@@ -188,6 +233,16 @@ test.describe('Desktop shell running an agent over ACP', () => {
 
   test.beforeEach(() => {
     expect(descriptor, `CI must run npm run runtime:assemble before e2e:desktop`).not.toBeNull();
+  });
+
+  // A sign-in's browser stand-in outlives the app on purpose: end it, also after a failure or a
+  // time-out (afterEach runs before the fixture removes the launch's temp dir with the pid file).
+  test.afterEach(() => {
+    if (signInPidFile && fs.existsSync(signInPidFile)) {
+      const browser = readMockPids(signInPidFile)['browser'];
+      if (browser && isProcessAlive(browser)) process.kill(browser);
+    }
+    signInPidFile = null;
   });
 
   test('a prompt to the seeded Codex agent streams its events in order to the renderer, and stopping and quitting leave no process @area:desktop-agent', async ({
@@ -362,5 +417,81 @@ test.describe('Desktop shell running an agent over ACP', () => {
     await sendRuntimeCommand(page, { type: 'stopAgent', agentId });
     await waitForStatus(page, agentId, 'offline');
     await quitLeavingNothing(session, javaBefore);
+  });
+  test('the adapter runs on Electron as Node and so does its own Node child, while no command either runs sees ELECTRON_RUN_AS_NODE @area:desktop-agent', async ({
+    desktop,
+  }) => {
+    const javaBefore = javaProcessesRunning(descriptor!.jar);
+    const session = await desktop.launch({ realRuntime: true, mockAgent: PROBE_RUN_AS_NODE });
+    const { app, window: page } = session;
+    const { agentId } = await openProjectWithAgent(session);
+
+    await sendRuntimeCommand(page, { type: 'startAgent', agentId });
+    await waitForStatus(page, agentId, 'ready');
+    await runOnePrompt(page, agentId, 'Probe the environment');
+
+    // The runtime passed the variable with its preload (ADR 0003 decision 12)...
+    const preload = path.join(session.userDataDir, 'runtime', 'electron-as-node.cjs');
+    expect(readRuntimeLog(session)).toContain(`${electronExecutable()} --require ${preload} `);
+    expect(readRuntimeLog(session)).toContain('with {ELECTRON_RUN_AS_NODE=1}');
+    // ...so the mock and the child on its own executable run on Electron as Node,
+    // and the commands they run (Codex's commands) never see the variable.
+    const electron = await app.evaluate(() => process.versions.electron);
+    const probe = eventsOfKind(agentEvents(await rendererRuntimeState(page), agentId), 'toolCall')
+      .map((event) => event.data.toolCall)
+      .find((call) => call.toolCallId === 'call-probe-run-as-node');
+    const asNode = { answered: true, electron, preloaded: true, sees: false, commandSees: false };
+    expect(probe?.rawOutput).toEqual({
+      adapter: { electron, preloaded: true, sees: false, commandSees: false },
+      codex: asNode,
+      // The same child through util.promisify(execFile), as codex-acp runs its helpers.
+      execFileChild: asNode,
+    });
+
+    await sendRuntimeCommand(page, { type: 'stopAgent', agentId });
+    await waitForStatus(page, agentId, 'offline');
+    await quitLeavingNothing(session, javaBefore);
+  });
+
+  test('a browser the sign-in opened outlives the app, while the adapter and its other processes end with it @area:desktop-agent', async ({
+    desktop,
+  }) => {
+    test.skip(
+      process.platform !== 'win32',
+      'Only the Windows runtime contains its children in a job object',
+    );
+    const javaBefore = javaProcessesRunning(descriptor!.jar);
+    const session = await desktop.launch({
+      realRuntime: true,
+      mockAgent: SIGN_IN_WITH_BROWSER,
+      beforeLaunch: ({ tmpBase }) => {
+        signInPidFile = path.join(tmpBase, 'mock-pids.txt');
+        const scenarioFile = path.join(tmpBase, 'mock-acp-scenario.json');
+        const scenario = JSON.parse(fs.readFileSync(scenarioFile, 'utf8')) as MockAgentScenario;
+        fs.writeFileSync(scenarioFile, JSON.stringify({ ...scenario, pidFile: signInPidFile }));
+      },
+    });
+    const { window: page } = session;
+    const { agentId } = await openProjectWithAgent(session);
+
+    await sendRuntimeCommand(page, { type: 'startAgent', agentId });
+    await waitForStatus(page, agentId, 'ready');
+    const stages = eventsOfKind(
+      agentEvents(await rendererRuntimeState(page), agentId),
+      'agentStarting',
+    ).map((event) => event.data.stage);
+    expect(stages).toEqual(['spawn', 'initialize', 'authenticate', 'session_new']);
+    await runOnePrompt(page, agentId, 'Start a child');
+    const pids = readMockPids(signInPidFile!);
+    for (const role of ['adapter', 'startup-child', 'browser', 'child']) {
+      expect(isProcessAlive(pids[role]), role).toBe(true);
+    }
+
+    await quitLeavingNothing(session, javaBefore);
+
+    for (const role of ['adapter', 'startup-child', 'child']) {
+      await expect.poll(() => isProcessAlive(pids[role]), { message: role }).toBe(false);
+    }
+    expect(isProcessAlive(pids['browser']), "the user's browser").toBe(true);
   });
 });
