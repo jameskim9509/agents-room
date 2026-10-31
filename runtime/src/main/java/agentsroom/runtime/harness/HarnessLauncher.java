@@ -46,7 +46,10 @@ import tools.jackson.databind.json.JsonMapper;
  * runs as plain Node, and loads {@link ElectronAsNodePreload} first ({@code <electron> --require
  * <preload> ...}). The preload keeps the variable to the adapter's own Node processes: codex-acp starts
  * Codex through {@code process.execPath}, which is Electron again and still runs as Node, while the
- * commands Codex runs never see the variable. A launch on a plain node gets neither.
+ * commands Codex runs never see the variable. That holds for a child started with the executable as the
+ * file argument of {@code spawn}, {@code execFile} and their sync forms, or a {@code fork}; one started
+ * through a shell ({@code exec}, {@code shell: true}) starts Electron as an app (ElectronAsNodePreload). A
+ * launch on a plain node gets neither.
  *
  * <p>Never {@code npx} and never {@code cmd /c}: Java cannot start {@code npx} on Windows, and cmd.exe
  * parses arguments again (ADR 0003).

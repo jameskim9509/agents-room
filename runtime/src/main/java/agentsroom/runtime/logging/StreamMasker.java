@@ -1,9 +1,9 @@
 package agentsroom.runtime.logging;
 
 /**
- * Masks one stream of text that arrives in pieces, such as the chunks of one adapter message (ADR 0005
- * decision 11), so that a secret split across pieces is masked like {@link SecretMasker} masks it in one
- * string. Not thread-safe: one stream, one caller.
+ * Masks one stream of text that arrives in pieces, such as the chunks of one adapter message or the pieces
+ * of one command's output (ADR 0005 decision 11), so that a secret split across pieces is masked like
+ * {@link SecretMasker} masks it in one string. Not thread-safe: one stream, one caller.
  *
  * <ul>
  *   <li>A piece is masked together with a bounded context of what came before it

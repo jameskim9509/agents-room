@@ -793,6 +793,106 @@ class AcpAgentIntegrationTests {
         agent.assertContract();
     }
 
+    /**
+     * ADR 0005 decision 11: codex-acp sends a command's output in pieces, one per tool call update
+     * ({@code _meta.terminal_output.data}). A key split across two pieces at every position, and across
+     * three at every pair of positions inside it, never shows in any frame; each command's output, joined
+     * over its events, is its whole output masked. The last piece comes with the command's end in some
+     * of them (it carries the held rest itself) and in its own update in the others.
+     */
+    @Test
+    void aKeySplitAcrossCommandOutputAtAnyPositionNeverReachesARenderer() throws Exception {
+        String text = "key " + FAKE_KEY + " end";
+        int keyStart = text.indexOf(FAKE_KEY);
+        int keyEnd = keyStart + FAKE_KEY.length();
+        Map<String, List<String>> commands = new java.util.LinkedHashMap<>();
+        for (int first = 1; first < text.length(); first++) {
+            commands.put("two-" + first, List.of(text.substring(0, first), text.substring(first)));
+        }
+        for (int first = keyStart + 1; first < keyEnd; first++) {
+            for (int second = first + 1; second < keyEnd; second++) {
+                commands.put("three-" + first + "-" + second, List.of(text.substring(0, first),
+                        text.substring(first, second), text.substring(second)));
+            }
+        }
+        List<Object> steps = new ArrayList<>();
+        commands.forEach((toolCallId, pieces) -> {
+            steps.add(Map.of("update", Map.of("sessionUpdate", "tool_call", "toolCallId", toolCallId,
+                    "title", "Run cat .env", "kind", "execute", "status", "in_progress")));
+            boolean lastWithTheEnd = pieces.size() == 3;
+            for (int i = 0; i < pieces.size(); i++) {
+                Map<String, Object> update = new java.util.LinkedHashMap<>(Map.of("sessionUpdate", "tool_call_update",
+                        "toolCallId", toolCallId));
+                Map<String, Object> meta = new java.util.LinkedHashMap<>();
+                meta.put("terminal_output", Map.of("data", pieces.get(i), "terminal_id", toolCallId));
+                if (lastWithTheEnd && i == pieces.size() - 1) {
+                    update.put("status", "completed");
+                    meta.put("terminal_exit", Map.of("exit_code", 0, "terminal_id", toolCallId));
+                }
+                update.put("_meta", meta);
+                steps.add(Map.of("update", update));
+            }
+            if (!lastWithTheEnd) {
+                steps.add(Map.of("update", Map.of("sessionUpdate", "tool_call_update", "toolCallId", toolCallId,
+                        "status", "completed", "_meta", Map.of("terminal_exit", Map.of("exit_code", 0,
+                                "terminal_id", toolCallId)))));
+            }
+        });
+        Conversation agent = openAgentWith(json.writeValueAsString(Map.of("extends", "happy", "prompts",
+                List.of(Map.of("stopReason", "end_turn", "steps", steps)))));
+        agent.command("startAgent");
+        agent.status("ready");
+
+        agent.command("sendPrompt", "text", "Read the environment");
+        agent.event("runEnded");
+
+        assertNoPieceOfTheKey(agent.renderer.texts());
+        commands.keySet().forEach(toolCallId -> assertThat(agent.terminalOutput(toolCallId)).as(toolCallId)
+                .isEqualTo("key **** end"));
+        assertThat(agent.lastToolCall("two-1").get("status").asString()).isEqualTo("completed");
+        assertThat(agent.events().stream().map(event -> event.get("seq").asLong()).toList()).isSorted();
+        agent.assertContract();
+    }
+
+    /**
+     * The mock's {@code terminal-output} scenario, shaped like codex-acp's reports: commands whose output
+     * pieces interleave with another command's and with a thought, and output that comes with the end of
+     * its command. Each command's output joins to its whole output masked, and the reconnect snapshot
+     * shows no more of the key than the live frames.
+     */
+    @Test
+    void commandOutputIsMaskedAcrossThePiecesOfItsTerminal() throws Exception {
+        Conversation agent = openAgentWith("{\"extends\":\"terminal-output\"}");
+        agent.command("startAgent");
+        agent.status("ready");
+
+        agent.command("sendPrompt", "text", "Look around");
+        agent.event("runEnded");
+
+        assertNoPieceOfTheKey(agent.renderer.texts());
+        assertThat(agent.terminalOutput("call-cat")).isEqualTo("notes\nthe key **** stays hidden.\n");
+        assertThat(agent.terminalOutput("call-env")).isEqualTo("PATH=/usr/bin\nOPENAI_API_KEY=****\nDEBUG=1\n");
+        assertThat(agent.terminalOutput("call-ls")).isEqualTo("README.md\nnotes.txt\n");
+        assertThat(agent.terminalOutput("call-grep")).as("the held rest goes out with the end").isEqualTo(
+                "./a.txt: " + FAKE_KEY.substring(0, 4));
+        assertThat(agent.lastToolCall("call-env").get("vendorMeta").get("terminal_exit").get("exit_code").asInt())
+                .isZero();
+        assertThat(agent.lastToolCall("call-grep").get("status").asString()).isEqualTo("failed");
+        assertNoPieceOfTheKey(List.of(agent.reconnectSnapshot().toString()));
+        agent.assertContract();
+    }
+
+    /** No 6 characters of the mock's key ("mock" alone is in its own names, such as "2.2.2-mock"). */
+    private static void assertNoPieceOfTheKey(List<String> frames) {
+        List<String> pieces = new ArrayList<>();
+        for (int at = 0; at + 6 <= FAKE_KEY.length(); at++) {
+            pieces.add(FAKE_KEY.substring(at, at + 6));
+        }
+        for (String frame : frames) {
+            assertThat(pieces).as("a piece of the key in %s", frame).noneMatch(frame::contains);
+        }
+    }
+
     // ── checkConnection (ADR 0004 decision 6) ──────────────────────────
 
     @Test
@@ -1173,6 +1273,22 @@ class AcpAgentIntegrationTests {
             }
             assertThat(last).as("tool call %s", toolCallId).isNotNull();
             return last;
+        }
+
+        /** A command's output as its events carried it: their {@code vendorMeta.terminal_output.data}, joined. */
+        String terminalOutput(String toolCallId) {
+            StringBuilder output = new StringBuilder();
+            for (JsonNode event : events()) {
+                String kind = event.get("kind").asString();
+                if ((kind.equals("toolCall") || kind.equals("toolCallUpdate"))
+                        && event.get("data").get("toolCall").get("toolCallId").asString().equals(toolCallId)) {
+                    JsonNode meta = event.get("data").get("toolCall").get("vendorMeta");
+                    if (meta != null && meta.has("terminal_output")) {
+                        output.append(meta.get("terminal_output").get("data").asString());
+                    }
+                }
+            }
+            return output.toString();
         }
 
         /** This agent in the snapshot a newly connected renderer gets. */

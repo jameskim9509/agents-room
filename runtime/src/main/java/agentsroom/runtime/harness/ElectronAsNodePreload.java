@@ -15,6 +15,12 @@ import java.util.Arrays;
  * its own executable (codex-acp starting Codex, a Node fork) gets it back, together with the script. So
  * the commands an agent runs never inherit it, and an Electron app one of them starts runs as an app.
  *
+ * <p>The script recognizes such a child only when the executable is the file argument of {@code spawn},
+ * {@code spawnSync}, {@code execFile} or {@code execFileSync}, or the child is a {@code fork}. A command
+ * line that goes through a shell ({@code exec}, {@code execSync}, one command string with {@code shell:
+ * true}) is not recognized: the child does not get the variable and starts Electron as an app. codex-acp
+ * 2.2.2 starts its own executable only the recognized ways (ADR 0003).
+ *
  * <p>The runtime carries the script as a resource and writes it into its data directory
  * ({@code <AGENTS_ROOM_DATA_DIR>/runtime/}{@value #FILE_NAME}), so a development run and an installed app
  * load it from the same place, outside any archive.

@@ -19,13 +19,16 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
@@ -38,8 +41,14 @@ import tools.jackson.databind.json.JsonMapper;
  * The browser of a Codex sign-in outlives the runtime, on Windows, where the runtime's job object kills
  * everything else it started (SCRUM-65 AC1, SCRUM-22). The real boot jar runs the mock ACP agent as the
  * Codex adapter; the mock's sign-in "opens the login page" the way codex-acp does, through PowerShell's
- * Start-Process, which starts a long-lived browser stand-in (a sleeping node). The agent then runs a prompt
- * that starts an ordinary child, after the sign-in.
+ * Start-Process, which starts a long-lived browser stand-in (a sleeping node named like a browser,
+ * {@link MockAcpAgent#browserStandIn}). The agent then runs a prompt that starts an ordinary child, after
+ * the sign-in.
+ *
+ * <p>The sign-in goes on once PowerShell exited, which a cold PowerShell on a fresh CI machine makes slow:
+ * the class starts one first, and the waits on the sign-in are long. {@value #LAUNCHER_DELAY_VARIABLE}
+ * (milliseconds) makes the mock's launcher wait that much longer before it starts the stand-in, to try
+ * these tests as on a slow machine.
  */
 @EnabledOnOs(OS.WINDOWS)
 class RuntimeSignInTests {
@@ -47,6 +56,14 @@ class RuntimeSignInTests {
     private static final String TOKEN = "jar-sign-in-token-value-xxxxxxxxxxxxxxxxxxx";
     private static final Duration STARTUP = Duration.ofSeconds(60);
     private static final Duration WAIT = Duration.ofSeconds(30);
+    /** A sign-in's own wait: PowerShell starts the stand-in, then exits, before the sign-in goes on. */
+    private static final Duration SIGN_IN_WAIT = Duration.ofSeconds(90);
+    /**
+     * The time limit of the sign-in that never completes: long enough for a cold PowerShell to start the
+     * stand-in while the sign-in still waits.
+     */
+    private static final Duration SIGN_IN_TIMEOUT = Duration.ofSeconds(45);
+    private static final String LAUNCHER_DELAY_VARIABLE = "AGENTS_ROOM_TEST_BROWSER_LAUNCHER_DELAY_MS";
     private static final Pattern READY_LINE = Pattern.compile("AGENTS_ROOM_READY \\{\"port\":(\\d+)\\}\n");
 
     /** What the runtime logs once the last sign-in ended (ChildProcessContainment). */
@@ -54,12 +71,32 @@ class RuntimeSignInTests {
             "No sign-in in progress: the runtime's job object holds every new process again";
 
     private final JsonMapper json = JsonMapper.builder().build();
-    private final List<ProcessHandle> started = new ArrayList<>();
+    /** A set: awaitPids reads the pid file again and again. */
+    private final Set<ProcessHandle> started = new LinkedHashSet<>();
 
     @TempDir
     Path dir;
 
     private String bootJar;
+
+    /**
+     * Starts PowerShell once, the way the mock's launcher does, with the environment the runtime gives the
+     * mock (the same profile folders, no PSModulePath): the first PowerShell on a fresh machine can take
+     * longer than a sign-in waits.
+     */
+    @BeforeAll
+    static void warmUpPowerShell() throws Exception {
+        Path powerShell = Path.of(System.getenv().getOrDefault("SystemRoot", "C:\\Windows"), "System32",
+                "WindowsPowerShell", "v1.0", "powershell.exe");
+        ProcessBuilder builder = new ProcessBuilder(powerShell.toString(), "-NoProfile", "-NonInteractive",
+                "-Command", "Start-Process -FilePath cmd.exe -ArgumentList '/d','/c','exit' -WindowStyle Hidden -Wait")
+                .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        builder.environment().keySet().removeIf(name -> name.equalsIgnoreCase("PSModulePath"));
+        Process process = builder.start();
+        if (!process.waitFor(SIGN_IN_WAIT.toSeconds(), TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+        }
+    }
 
     @BeforeEach
     void needsTheJarAndNode() {
@@ -68,8 +105,9 @@ class RuntimeSignInTests {
         assumeTrue(MockAcpAgent.node().isPresent(), "node is not on the PATH: the mock ACP agent runs on it");
     }
 
+    /** Also waits for them, so that nothing of a test runs on into the next one. */
     @AfterEach
-    void killLeftovers() throws IOException {
+    void killLeftovers() throws IOException, InterruptedException {
         // The stand-ins too: nobody else ends them. The pid file also names the ones a failed test never
         // got to read.
         Path pids = dir.resolve("pids.txt");
@@ -81,9 +119,16 @@ class RuntimeSignInTests {
                 }
             }
         }
+        Set<ProcessHandle> all = new LinkedHashSet<>();
         for (ProcessHandle process : started) {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
+            process.descendants().forEach(all::add);
+            all.add(process);
+        }
+        all.forEach(ProcessHandle::destroyForcibly);
+        // isAlive, not onExit: onExit waits on the pid, which a process started since may have taken.
+        long deadline = System.nanoTime() + WAIT.toNanos();
+        while (all.stream().anyMatch(ProcessHandle::isAlive) && System.nanoTime() < deadline) {
+            Thread.sleep(50);
         }
     }
 
@@ -124,14 +169,14 @@ class RuntimeSignInTests {
      */
     @Test
     void theBrowserOfASignInThatTimedOutOutlivesTheRuntimeAndTheJobsContainAgain() throws Exception {
-        // Short, but long enough for a cold PowerShell to open the stand-in while the sign-in still waits.
         Runtime runtime = startRuntime(Map.of("authenticate", "never", "browserLauncher", "exits"),
-                "-Dagentsroom.runtime.acp.authenticate-timeout=8s");
+                "-Dagentsroom.runtime.acp.authenticate-timeout=" + SIGN_IN_TIMEOUT.toSeconds() + "s");
         String agentId = runtime.openProject();
         runtime.renderer().send(json.writeValueAsString(Map.of("type", "startAgent", "agentId", agentId)));
         // While authenticate waits: the sign-in opened the browser and the adapter still runs.
-        Map<String, ProcessHandle> pids = runtime.awaitPids("adapter", "startup-child", "browser");
-        JsonNode error = until(runtime.renderer(), frame -> event(frame, "agentError")).get("event").get("data");
+        Map<String, ProcessHandle> pids = runtime.awaitPids(SIGN_IN_TIMEOUT, "adapter", "startup-child", "browser");
+        JsonNode error = until(runtime.renderer(), frame -> event(frame, "agentError"), SIGN_IN_TIMEOUT.plus(WAIT))
+                .get("event").get("data");
         assertThat(error.get("code").asString()).isEqualTo("AUTH_FAILED");
         assertThat(error.get("stage").asString()).isEqualTo("authenticate");
         awaitLog(runtime.log(), "Adapter process " + pids.get("adapter").pid() + " no longer signs in");
@@ -155,7 +200,7 @@ class RuntimeSignInTests {
         until(runtime.renderer(), frame -> event(frame, "agentStarting") && frame.get("event").get("data").get("stage")
                 .asString().equals("authenticate"));
         until(runtime.renderer(), frame -> event(frame, "agentStatusChanged")
-                && frame.get("event").get("data").get("status").asString().equals("ready"));
+                && frame.get("event").get("data").get("status").asString().equals("ready"), SIGN_IN_WAIT);
         awaitLog(runtime.log(), CONTAINED_AGAIN);
         runtime.renderer().send(json.writeValueAsString(Map.of("type", "sendPrompt", "agentId", agentId, "text", "go")));
         until(runtime.renderer(), frame -> event(frame, "runEnded"));
@@ -176,8 +221,9 @@ class RuntimeSignInTests {
         Map<String, Object> keys = new LinkedHashMap<>();
         keys.put("extends", "auth-required");
         keys.put("childAtStart", true);
-        keys.put("browserStandIn", List.of(MockAcpAgent.node().orElseThrow().toString(), "-e",
+        keys.put("browserStandIn", List.of(MockAcpAgent.browserStandIn().toString(), "-e",
                 "setInterval(() => {}, 1000)"));
+        keys.put("browserLauncherDelayMs", launcherDelayMs());
         keys.put("pidFile", pids.toString());
         keys.putAll(overrides);
         MockAcpAgent.useScenarioJson(scenario, json.writeValueAsString(keys));
@@ -205,6 +251,12 @@ class RuntimeSignInTests {
         return new Runtime(process, log, renderer, pids, dir.resolve("project"));
     }
 
+    /** The extra wait of the mock's launcher: {@value #LAUNCHER_DELAY_VARIABLE}, else none. */
+    private static long launcherDelayMs() {
+        String delay = System.getenv(LAUNCHER_DELAY_VARIABLE);
+        return delay == null || delay.isBlank() ? 0 : Long.parseLong(delay.strip());
+    }
+
     private static void awaitLog(StreamCollector log, String line) throws InterruptedException {
         long deadline = System.nanoTime() + WAIT.toNanos();
         while (!log.text().contains(line)) {
@@ -216,14 +268,19 @@ class RuntimeSignInTests {
     }
 
     private static JsonNode until(TestRenderer renderer, Predicate<JsonNode> matches) throws InterruptedException {
-        long deadline = System.nanoTime() + WAIT.toNanos();
+        return until(renderer, matches, WAIT);
+    }
+
+    private static JsonNode until(TestRenderer renderer, Predicate<JsonNode> matches, Duration wait)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + wait.toNanos();
         while (System.nanoTime() < deadline) {
             JsonNode frame = renderer.poll(Duration.ofNanos(Math.max(1, deadline - System.nanoTime())));
             if (frame != null && matches.test(frame)) {
                 return frame;
             }
         }
-        return fail("no matching frame within " + WAIT);
+        return fail("no matching frame within " + wait);
     }
 
     private static String type(JsonNode frame) {
@@ -277,30 +334,48 @@ class RuntimeSignInTests {
                     .asString();
         }
 
+        /** The pids the mock reported so far, by role, whether they still run or not. */
+        Map<String, Long> reported() throws IOException {
+            Map<String, Long> pids = new LinkedHashMap<>();
+            if (Files.isRegularFile(pidFile)) {
+                for (String line : Files.readAllLines(pidFile, StandardCharsets.UTF_8)) {
+                    String[] parts = line.split(" ");
+                    if (parts.length == 2) {
+                        pids.put(parts[0], Long.parseLong(parts[1]));
+                    }
+                }
+            }
+            return pids;
+        }
+
         /** The processes the mock reported that still run, by role; a launcher that exits is gone by now. */
         Map<String, ProcessHandle> pids() throws IOException {
             Map<String, ProcessHandle> processes = new HashMap<>();
-            for (String line : Files.readAllLines(pidFile, StandardCharsets.UTF_8)) {
-                String[] parts = line.split(" ");
-                ProcessHandle.of(Long.parseLong(parts[1])).ifPresent(process -> {
-                    processes.put(parts[0], process);
-                    started.add(process);
-                });
-            }
+            reported().forEach((role, pid) -> ProcessHandle.of(pid).ifPresent(process -> {
+                processes.put(role, process);
+                started.add(process);
+            }));
             return processes;
         }
 
-        /** {@link #pids()} once the mock reported every one of {@code roles} and they all run. */
-        Map<String, ProcessHandle> awaitPids(String... roles) throws Exception {
-            long deadline = System.nanoTime() + WAIT.toNanos();
+        /**
+         * {@link #pids()} once the mock reported every one of {@code roles} and they all run. A failure names
+         * every role the mock reported, and whether it still runs.
+         */
+        Map<String, ProcessHandle> awaitPids(Duration wait, String... roles) throws Exception {
+            long deadline = System.nanoTime() + wait.toNanos();
             while (true) {
-                Map<String, ProcessHandle> processes = Files.isRegularFile(pidFile) ? pids() : Map.of();
+                Map<String, ProcessHandle> processes = pids();
                 if (processes.keySet().containsAll(List.of(roles))) {
                     return processes;
                 }
                 if (System.nanoTime() > deadline) {
-                    return fail("the mock reported " + processes.keySet() + " within " + WAIT + ", not all of "
-                            + List.of(roles));
+                    Map<String, String> states = new LinkedHashMap<>();
+                    reported().forEach((role, pid) -> states.put(role,
+                            pid + (ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false) ? " running"
+                                    : " exited")));
+                    return fail("within " + wait + " the mock reported " + states + ", not all of " + List.of(roles)
+                            + " running; runtime log:\n" + log.text());
                 }
                 Thread.sleep(50);
             }

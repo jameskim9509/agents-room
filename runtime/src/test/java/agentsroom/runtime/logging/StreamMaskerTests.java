@@ -33,7 +33,9 @@ class StreamMaskerTests {
             new Case("aws_secret_access_key = Zq7Wx9Vb3Kp5 done", "Zq7Wx9Vb3Kp5"),
             new Case("Proxy-Authorization: Basic Zq7Wx9Vb3Kp5 end", "Zq7Wx9Vb3Kp5"),
             new Case("OPENAI_API_KEY=" + SK_KEY + " and more", SK_KEY.substring(3)),
-            new Case("a=token=Zq7Wx9Vb3Kp5 b", "Zq7Wx9Vb3Kp5"));
+            new Case("a=token=Zq7Wx9Vb3Kp5 b", "Zq7Wx9Vb3Kp5"),
+            // Followed by a letter the ID is no ID, until the registered secret completes and is masked first.
+            new Case("id " + ACCESS_KEY_ID + REGISTERED + " end", ACCESS_KEY_ID));
 
     /** Ordinary text, some of it ending in what could start a secret ("s", "A", "sk", "Bear"). */
     private static final List<String> ORDINARY = List.of(
@@ -122,6 +124,55 @@ class StreamMaskerTests {
             }
             assertThat(String.join("", stream(small))).isEqualTo(whole);
         }
+    }
+
+    /**
+     * However much whitespace (spaces, newlines) separates a key, its separator or a scheme from the value,
+     * and wherever the pieces split it, the value never shows: the kept context cuts long whitespace runs,
+     * which the patterns read alike, so the key stays in it. The text comes out as the whole text masks,
+     * except that a scheme's spaces beyond what is held back already showed (the whole text reads
+     * {@code "Bearer ****"}).
+     */
+    @Test
+    void aLongRunOfWhitespaceBeforeTheValueNeverLetsTheValueShow() {
+        String value = "Zq7Wx9Vb3Kp5";
+        for (String gap : List.of(" ".repeat(600), "\n".repeat(600), " \r\n\t".repeat(150), " ".repeat(513))) {
+            List<String> texts = List.of(
+                    "Bearer" + gap + value + " end",
+                    "Authorization:" + gap + "Bearer" + gap + value + " end",
+                    "token=" + gap + value + " end",
+                    "token" + gap + "=" + value + " end",
+                    "token" + gap + "=" + gap + value + " end",
+                    "{\"api_token\":" + gap + "\"" + value + "\"}",
+                    "{\"api_token\"" + gap + ":" + gap + "\"" + value + "\"}",
+                    "x".repeat(700) + " OPENAI_API_KEY" + gap + "=" + gap + value + " end");
+            for (String text : texts) {
+                String whole = SecretMasker.mask(text);
+                assertThat(windows(value)).as("whole: %s", whole.strip()).noneMatch(whole::contains);
+                for (int at = 1; at < text.length(); at++) {
+                    assertValueHidden(text, whole, value, List.of(text.substring(0, at), text.substring(at)));
+                }
+                int valueAt = text.indexOf(value);
+                for (int first = 1; first < valueAt; first += 37) {
+                    assertValueHidden(text, whole, value,
+                            List.of(text.substring(0, first), text.substring(first, valueAt), text.substring(valueAt)));
+                }
+                List<String> small = new ArrayList<>();
+                for (int at = 0; at < text.length(); at += 7) {
+                    small.add(text.substring(at, Math.min(text.length(), at + 7)));
+                }
+                assertValueHidden(text, whole, value, small);
+            }
+        }
+    }
+
+    private static void assertValueHidden(String text, String whole, String value, List<String> pieces) {
+        List<String> shown = stream(pieces);
+        for (String piece : shown) {
+            assertThat(windows(value)).as("%s split %s", text.strip(), pieces.size()).noneMatch(piece::contains);
+        }
+        assertThat(String.join("", shown).replaceAll("\\s+", " ")).as("%s", text.strip())
+                .isEqualTo(whole.replaceAll("\\s+", " "));
     }
 
     @Test

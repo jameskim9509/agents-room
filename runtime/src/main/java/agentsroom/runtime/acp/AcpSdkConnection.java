@@ -72,6 +72,14 @@ final class AcpSdkConnection implements AgentConnection {
     private static final Pattern WINDOWS_ERROR = Pattern.compile("error=(\\d+)");
     private static final Set<String> MISSING_EXECUTABLE_ERRORS = Set.of("2", "3");
 
+    /**
+     * How long a sign-in lets the processes its adapter's tree starts leave the job objects at most. codex-acp
+     * opens the login page within seconds of the authenticate call (a cold PowerShell included); the user
+     * then signs in in that browser, which needs no new process of the tree. A browser started later is
+     * contained again and ends with the app.
+     */
+    static final Duration SIGN_IN_RELEASE_LIMIT = Duration.ofSeconds(60);
+
     /** One start at a time, so the before/after comparison of the children finds the right process. */
     private static final Object SPAWN_LOCK = new Object();
 
@@ -230,14 +238,15 @@ final class AcpSdkConnection implements AgentConnection {
 
     /**
      * The sign-in. codex-acp opens the login page from its own process, so a browser that was not
-     * running yet starts in this tree: the tree kill spares browsers from now on, and until the answer
-     * (success, failure, time-out, or the end of the connection) the processes the tree starts leave the
-     * job objects (Windows), so that the browser outlives the app too (SCRUM-65).
+     * running yet starts in this tree: the tree kill spares web browsers from now on, and until the answer
+     * (success, failure, time-out, or the end of the connection), but at most for
+     * {@link #SIGN_IN_RELEASE_LIMIT}, the processes the tree starts leave the job objects (Windows), so that
+     * the browser outlives the app too (SCRUM-65).
      */
     @Override
     public void authenticate(String methodId, Duration timeout) throws AgentCallException {
         tree.spareBrowsers();
-        AdapterJob.Release release = job.releaseNewProcesses();
+        AdapterJob.Release release = job.releaseNewProcesses(SIGN_IN_RELEASE_LIMIT);
         try {
             await(client.authenticate(new AcpSchema.AuthenticateRequest(methodId)), timeout);
         } finally {

@@ -43,15 +43,20 @@
  *                              starts this long-lived command (on Windows
  *                              PowerShell's Start-Process, as codex-acp's `Start`;
  *                              elsewhere a detached spawn), and the sign-in goes
- *                              on once the launcher exited. The command is the
- *                              browser stand-in; the mock never ends it
+ *                              on once the launcher exited, as codex-acp's `open`
+ *                              waits for PowerShell. The command is the browser
+ *                              stand-in (the runtime knows a browser by its
+ *                              executable's name); the mock never ends it
  *   browserLauncher: "exits" | "stays"
  *                              "stays": the launcher runs on after the start (the
  *                              mock never ends it), so the stand-in stays a
  *                              descendant of the adapter; the sign-in goes on once
  *                              the stand-in started ("exits")
+ *   browserLauncherDelayMs: N  the launcher waits N ms before it starts the
+ *                              stand-in: a slow or cold PowerShell (0)
  *   pidFile: "file"            appends "<role> <pid>" lines: "adapter" (the mock),
- *                              "startup-child", "browser-launcher", "browser" and
+ *                              "startup-child", "browser-launcher", "browser" (as
+ *                              soon as the launcher reports it started it) and
  *                              "child" (spawnChild)
  *   childAtStart: true         starts a long-lived child before reading stdin, as
  *                              codex-acp starts Codex's app-server
@@ -134,6 +139,49 @@ function textUpdate(sessionUpdate, text, messageId) {
   const update = { sessionUpdate, content: { type: 'text', text } };
   if (messageId) update.messageId = messageId;
   return { update };
+}
+
+/**
+ * A command that shows a terminal, as codex-acp reports it to a client that declares
+ * `_meta.terminal_output`: the tool call names the terminal (its id is the tool call's), each piece of
+ * output is a tool_call_update of its own with `_meta.terminal_output: {data, terminal_id}`, and the end
+ * carries `terminal_exit`.
+ */
+function terminalCommand(toolCallId, command) {
+  return {
+    update: {
+      sessionUpdate: 'tool_call',
+      toolCallId,
+      title: `Run ${command.join(' ')}`,
+      kind: 'execute',
+      status: 'in_progress',
+      rawInput: { command },
+      content: [{ type: 'terminal', terminalId: toolCallId }],
+      _meta: { terminal_info: { cwd: '${cwd}', terminal_id: toolCallId } },
+    },
+  };
+}
+
+function terminalOutput(toolCallId, data, fields = {}) {
+  return {
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      ...fields,
+      _meta: { ...fields._meta, terminal_output: { data, terminal_id: toolCallId } },
+    },
+  };
+}
+
+function terminalExit(toolCallId, exitCode) {
+  return {
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: exitCode === 0 ? 'completed' : 'failed',
+      _meta: { terminal_exit: { exit_code: exitCode, signal: null, terminal_id: toolCallId } },
+    },
+  };
 }
 
 const HAPPY = {
@@ -536,6 +584,40 @@ const SCENARIOS = {
   'probe-run-as-node': {
     prompts: [{ stopReason: 'end_turn', steps: [{ probeRunAsNode: true }] }],
   },
+  // Command output in pieces (ADR 0005 decision 11): a key split across two pieces of one command, a
+  // key-value split across three of another while a third command's output and a message come between,
+  // and output that did not stream arriving with the end of its command.
+  'terminal-output': {
+    prompts: [
+      {
+        stopReason: 'end_turn',
+        steps: [
+          terminalCommand('call-cat', ['cat', 'notes.txt']),
+          terminalOutput('call-cat', `notes\nthe key ${FAKE_API_KEY.slice(0, 6)}`),
+          terminalOutput('call-cat', `${FAKE_API_KEY.slice(6)} stays hidden.\n`),
+          terminalExit('call-cat', 0),
+          terminalCommand('call-env', ['cat', '.env']),
+          terminalCommand('call-ls', ['ls']),
+          terminalOutput('call-env', 'PATH=/usr/bin\nOPENAI_API_KEY='),
+          terminalOutput('call-ls', 'README.md\n'),
+          terminalOutput('call-env', FAKE_API_KEY.slice(0, 9)),
+          textUpdate('agent_thought_chunk', 'Reading the environment.'),
+          terminalOutput('call-env', `${FAKE_API_KEY.slice(9)}\nDEBUG=1\n`),
+          terminalExit('call-env', 0),
+          terminalOutput('call-ls', 'notes.txt\n', {
+            status: 'completed',
+            _meta: { terminal_exit: { exit_code: 0, signal: null, terminal_id: 'call-ls' } },
+          }),
+          terminalCommand('call-grep', ['grep', '-r', 'sk-', '.']),
+          terminalOutput('call-grep', `./a.txt: ${FAKE_API_KEY.slice(0, 4)}`, {
+            status: 'failed',
+            _meta: { terminal_exit: { exit_code: 1, signal: null, terminal_id: 'call-grep' } },
+          }),
+          textUpdate('agent_message_chunk', 'Done.', 'msg-terminal'),
+        ],
+      },
+    ],
+  },
 };
 
 function parseArgs(argv) {
@@ -716,33 +798,51 @@ async function probeChildByExecFile() {
 
 /**
  * Starts the command detached through a launcher, as PowerShell's Start opens a login page in a browser
- * that was not running. The launcher exits at once, and the promise resolves with the command's pid once
- * it is gone, as codex-acp waits for PowerShell; with `stays`, the launcher runs on and the promise
- * resolves as soon as the command started.
+ * that was not running, and records the launcher, then the command as soon as the launcher reports it
+ * started it. The launcher exits then, and the promise resolves once it is gone, as codex-acp's `open`
+ * waits for PowerShell on Windows; with `stays`, the launcher runs on and the promise resolves as soon
+ * as the command started. `delayMs` makes the launcher wait that long first (a slow or cold PowerShell).
  */
-function openBrowserStandIn(command, stays) {
-  if (process.platform === 'win32') return startThroughPowerShell(command, stays);
+function openBrowserStandIn(command, stays, delayMs) {
+  if (process.platform === 'win32') return startThroughPowerShell(command, stays, delayMs);
   const launcher = [
     "const { spawn } = require('node:child_process');",
-    'const [stays, command, ...args] = process.argv.slice(1);',
-    "const browser = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });",
-    'browser.unref();',
-    "browser.on('spawn', () => process.stdout.write(`${browser.pid}\\n`));",
-    "if (stays === 'stays') setInterval(() => {}, 1000);",
+    'const [stays, delayMs, command, ...args] = process.argv.slice(1);',
+    'setTimeout(() => {',
+    "  const browser = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });",
+    '  browser.unref();',
+    "  browser.on('spawn', () => process.stdout.write(`${browser.pid}\\n`));",
+    "  if (stays === 'stays') setInterval(() => {}, 1000);",
+    '}, Number(delayMs));',
   ].join('\n');
+  const child = spawn(
+    process.execPath,
+    ['-e', launcher, stays ? 'stays' : 'exits', String(delayMs), ...command],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  return launched(child, stays);
+}
+
+/**
+ * Records a browser launcher and, once it printed it, the pid of the browser it started: also when the
+ * sign-in ends before the launcher does. Resolves once the launcher is gone, or with `stays` once the
+ * browser started.
+ */
+function launched(child, stays) {
+  recordPid('browser-launcher', child.pid);
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ['-e', launcher, stays ? 'stays' : 'exits', ...command], {
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    recordPid('browser-launcher', child.pid);
     let output = '';
-    const pid = () => Number(output.trim()) || null;
+    let reported = false;
     child.stdout.on('data', (data) => {
       output += data;
-      if (stays && output.endsWith('\n')) resolve(pid());
+      if (!reported && output.includes('\n')) {
+        reported = true;
+        recordPid('browser', Number(output.trim()) || null);
+        if (stays) resolve();
+      }
     });
-    child.on('error', () => resolve(null));
-    child.on('close', () => resolve(pid()));
+    child.on('error', () => resolve());
+    child.on('close', () => resolve());
   });
 }
 
@@ -757,38 +857,29 @@ function windowsArgument(text) {
  * codex-acp's `Start` (the shell starts the program, so it inherits no handle
  * of the mock's, as a browser started that way does not).
  */
-function startThroughPowerShell([file, ...args], stays) {
+function startThroughPowerShell([file, ...args], stays, delayMs) {
   const quote = (text) => `'${text.replace(/'/g, "''")}'`;
   const argumentList =
     args.length > 0 ? ` -ArgumentList ${quote(args.map(windowsArgument).join(' '))}` : '';
   const script = [
     "$ProgressPreference = 'SilentlyContinue'",
+    delayMs > 0 ? `Start-Sleep -Milliseconds ${delayMs}` : '',
     `$browser = Start-Process -FilePath ${quote(file)}${argumentList} -WindowStyle Hidden -PassThru`,
     '[Console]::Out.WriteLine($browser.Id)',
     stays ? 'while ($true) { Start-Sleep -Seconds 1 }' : '',
   ].join('\n');
   const powerShell = `${process.env['SystemRoot'] || 'C:\\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-  return new Promise((resolve) => {
-    const child = spawn(
-      powerShell,
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-EncodedCommand',
-        Buffer.from(script, 'utf16le').toString('base64'),
-      ],
-      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
-    );
-    recordPid('browser-launcher', child.pid);
-    let output = '';
-    const pid = () => Number(output.trim()) || null;
-    child.stdout.on('data', (data) => {
-      output += data;
-      if (stays && output.includes('\n')) resolve(pid());
-    });
-    child.on('error', () => resolve(null));
-    child.on('close', () => resolve(pid()));
-  });
+  const child = spawn(
+    powerShell,
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
+  );
+  return launched(child, stays);
 }
 
 async function runStep(step) {
@@ -906,11 +997,11 @@ async function authenticate(id, params) {
   }
   if (scenario.browserStandIn) {
     // codex-acp opens the login page first, whether the sign-in then succeeds, fails or never ends.
-    const browser = await openBrowserStandIn(
+    await openBrowserStandIn(
       scenario.browserStandIn,
       scenario.browserLauncher === 'stays',
+      scenario.browserLauncherDelayMs || 0,
     );
-    recordPid('browser', browser);
   }
   if (scenario.authenticate === 'never') return;
   if (scenario.authenticate === 'fail') {

@@ -2,6 +2,8 @@ package agentsroom.runtime.acp;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import agentsroom.runtime.process.WebBrowsers;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,14 +46,14 @@ class ProcessTreeWatchTests {
 
     @Test
     void namesTheCommonWebBrowsersOnly() {
-        assertThat(ProcessTreeWatch.namesWebBrowser("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"))
+        assertThat(WebBrowsers.names("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"))
                 .isTrue();
-        assertThat(ProcessTreeWatch.namesWebBrowser("C:/Program Files (x86)/Microsoft/Edge/Application/MSEDGE.EXE"))
+        assertThat(WebBrowsers.names("C:/Program Files (x86)/Microsoft/Edge/Application/MSEDGE.EXE"))
                 .isTrue();
-        assertThat(ProcessTreeWatch.namesWebBrowser("/usr/lib/firefox/firefox")).isTrue();
-        assertThat(ProcessTreeWatch.namesWebBrowser("C:\\Program Files\\nodejs\\node.exe")).isFalse();
-        assertThat(ProcessTreeWatch.namesWebBrowser("C:\\Users\\me\\codex.exe")).isFalse();
-        assertThat(ProcessTreeWatch.namesWebBrowser("/usr/bin/git")).isFalse();
+        assertThat(WebBrowsers.names("/usr/lib/firefox/firefox")).isTrue();
+        assertThat(WebBrowsers.names("C:\\Program Files\\nodejs\\node.exe")).isFalse();
+        assertThat(WebBrowsers.names("C:\\Users\\me\\codex.exe")).isFalse();
+        assertThat(WebBrowsers.names("/usr/bin/git")).isFalse();
     }
 
     @Test

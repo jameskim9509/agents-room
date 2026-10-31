@@ -40,10 +40,23 @@ export const DEV_RUNTIME_DESCRIPTOR = path.join(REPO_ROOT, 'runtime', 'build', '
 const FAKE_RUNTIME = path.join(__dirname, '..', 'fixtures', 'fake-runtime.cjs');
 const MOCK_ACP_AGENT = path.join(__dirname, '..', 'fixtures', 'mock-acp-agent.cjs');
 const IS_WINDOWS = process.platform === 'win32';
+/**
+ * How long one process-table query may take. A WMI query can hang for minutes
+ * (once 12 minutes, in the fixture's teardown right after a test ended its
+ * browser stand-in), and `execFileSync` blocks the worker meanwhile, so
+ * Playwright's own time-outs cannot fire: WMI gives up after the first number,
+ * and the second kills PowerShell if WMI does not.
+ */
+const WMI_TIMEOUT_S = 20;
+const PROCESS_QUERY_TIMEOUT_MS = 30_000;
+/** How long `taskkill` may take. */
+const KILL_TIMEOUT_MS = 30_000;
 /** One `<pid> <command line>` row per java.exe process. */
-const WINDOWS_JAVA_PROCESSES = `Get-CimInstance Win32_Process -Filter "Name='java.exe'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`;
+const WINDOWS_JAVA_PROCESSES = `Get-CimInstance Win32_Process -Filter "Name='java.exe'" -OperationTimeoutSec ${WMI_TIMEOUT_S} -ErrorAction Stop | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`;
 /** One `<pid> <command line>` row per process. */
-const WINDOWS_PROCESSES = `Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`;
+const WINDOWS_PROCESSES = `Get-CimInstance Win32_Process -OperationTimeoutSec ${WMI_TIMEOUT_S} -ErrorAction Stop | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }`;
+/** Where `browserStandIn()` keeps its executable, in the system's temp folder (shared with the runtime's tests). */
+const BROWSER_STAND_IN_DIR = path.join(os.tmpdir(), 'agents-room-browser-stand-in');
 /**
  * The runtime's adapter knobs: set per launch, never inherited from a
  * developer's shell. Every harness's command override
@@ -100,6 +113,12 @@ export interface LaunchDesktopOptions {
    * data dir (`<userDataDir>/runtime`, architecture.md Persistence).
    */
   beforeLaunch?: (dirs: { tmpBase: string; userDataDir: string }) => void;
+  /**
+   * Starts PowerShell once with the launch's environment before the app
+   * (Windows): for a mock agent whose sign-in opens its browser stand-in
+   * through PowerShell.
+   */
+  warmUpPowerShell?: boolean;
 }
 
 export interface DesktopSession {
@@ -172,17 +191,33 @@ export function processesWithArgument(needle: string): number[] {
   return processesRunning(needle, WINDOWS_PROCESSES, () => true);
 }
 
+/** The process table: one `<pid> <command line>` row per process. A query that fails or hangs is tried once more. */
+function processTable(windowsQuery: string): string {
+  if (!IS_WINDOWS) {
+    return execFileSync('ps', ['-eo', 'pid=,args='], {
+      encoding: 'utf8',
+      timeout: PROCESS_QUERY_TIMEOUT_MS,
+    });
+  }
+  const query = () =>
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsQuery], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: PROCESS_QUERY_TIMEOUT_MS,
+    });
+  try {
+    return query();
+  } catch {
+    return query();
+  }
+}
+
 function processesRunning(
   needle: string,
   windowsQuery: string,
   accept: (commandLine: string) => boolean,
 ): number[] {
-  const table = IS_WINDOWS
-    ? execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsQuery], {
-        encoding: 'utf8',
-        windowsHide: true,
-      })
-    : execFileSync('ps', ['-eo', 'pid=,args='], { encoding: 'utf8' });
+  const table = processTable(windowsQuery);
   // Windows paths are case-insensitive.
   const wanted = IS_WINDOWS ? needle.toLowerCase() : needle;
   const pids: number[] = [];
@@ -298,12 +333,92 @@ export function isProcessAlive(pid: number): boolean {
 function forceKill(pid: number): void {
   try {
     if (IS_WINDOWS) {
-      execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+      execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        timeout: KILL_TIMEOUT_MS,
+      });
     } else {
       process.kill(pid, 'SIGKILL');
     }
   } catch {
     // already gone
+  }
+}
+
+/**
+ * Kills these processes (not their trees) where they still run and waits,
+ * without blocking, until they are gone: for the processes a test leaves
+ * running on purpose, such as a sign-in's browser stand-in.
+ */
+export async function killAndAwaitExit(pids: number[], timeoutMs = 15_000): Promise<void> {
+  for (const pid of pids) {
+    if (!isProcessAlive(pid)) continue;
+    try {
+      process.kill(pid);
+    } catch {
+      // gone meanwhile
+    }
+  }
+  await expect
+    .poll(() => pids.filter(isProcessAlive), {
+      timeout: timeoutMs,
+      message: 'processes still running',
+    })
+    .toEqual([]);
+}
+
+/**
+ * A stand-in for the web browser a sign-in opens: this Node under a browser's
+ * name (`msedge.exe`), so that the runtime takes it for one, as it takes the
+ * user's browser by its executable's name. It lives in the system's temp
+ * folder and is made once and kept (a stand-in that outlives a test keeps it in
+ * use): a hard link where the file system allows one, else a copy.
+ */
+export function browserStandIn(): string {
+  const browser = path.join(BROWSER_STAND_IN_DIR, IS_WINDOWS ? 'msedge.exe' : 'msedge');
+  if (fs.existsSync(browser)) return browser;
+  fs.mkdirSync(BROWSER_STAND_IN_DIR, { recursive: true });
+  try {
+    fs.linkSync(process.execPath, browser);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return browser;
+    const copy = `${browser}.${process.pid}.tmp`;
+    fs.copyFileSync(process.execPath, copy);
+    fs.chmodSync(copy, 0o755);
+    try {
+      fs.renameSync(copy, browser);
+    } catch {
+      fs.rmSync(copy, { force: true });
+    }
+  }
+  return browser;
+}
+
+/**
+ * Starts PowerShell once, the way the mock agent's browser launcher does, with
+ * the environment the mock will get (a launch's own profile folders, no
+ * PSModulePath): the first PowerShell with a fresh profile, or on a fresh
+ * machine, can take longer than a sign-in waits.
+ */
+function warmUpPowerShell(env: Record<string, string>): void {
+  if (!IS_WINDOWS) return;
+  const warmEnv = { ...env };
+  for (const name of Object.keys(warmEnv)) {
+    if (name.toLowerCase() === 'psmodulepath') delete warmEnv[name];
+  }
+  try {
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        "Start-Process -FilePath cmd.exe -ArgumentList '/d','/c','exit' -WindowStyle Hidden -Wait",
+      ],
+      { env: warmEnv, stdio: 'ignore', windowsHide: true, timeout: 120_000 },
+    );
+  } catch {
+    // Only a warm-up: the sign-in's own wait decides.
   }
 }
 
@@ -369,12 +484,21 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
       ? [electronExecutable(), MOCK_ACP_AGENT, '--scenario-file', mockAgentScenarioFile]
       : null,
   );
+  if (opts.warmUpPowerShell) warmUpPowerShell(env);
   // Real runtime: the JVMs running its jar before the launch are someone else's.
   const realJar = opts.realRuntime ? readDevRuntimeDescriptor()?.jar : undefined;
   const javaBefore = new Set(realJar ? javaProcessesRunning(realJar) : []);
 
   let app: ElectronApplication | undefined;
   let appProcess: ChildProcess | undefined;
+  /** A leftover search that fails (a process table that cannot be read in time) must not stop the cleanup. */
+  const killLeftovers = (find: () => number[]): void => {
+    try {
+      for (const pid of find()) forceKill(pid);
+    } catch (err) {
+      console.warn(`[e2e] leftover processes not checked: ${(err as Error).message}`);
+    }
+  };
   const cleanup = async (): Promise<void> => {
     if (app && appProcess && !hasExited(appProcess)) {
       await app.close().catch(() => undefined);
@@ -384,10 +508,10 @@ export async function launchDesktop(opts: LaunchDesktopOptions = {}): Promise<De
       forceKill(state.pid);
     }
     if (realJar) {
-      for (const pid of javaProcessesRunning(realJar)) if (!javaBefore.has(pid)) forceKill(pid);
+      killLeftovers(() => javaProcessesRunning(realJar).filter((pid) => !javaBefore.has(pid)));
     }
     if (mockAgentScenarioFile) {
-      for (const pid of processesWithArgument(mockAgentScenarioFile)) forceKill(pid);
+      killLeftovers(() => processesWithArgument(mockAgentScenarioFile));
     }
     fs.rmSync(tmpBase, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };

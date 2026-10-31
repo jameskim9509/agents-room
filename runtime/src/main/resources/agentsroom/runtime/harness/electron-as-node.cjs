@@ -10,7 +10,10 @@
  *   - the variable is removed from this process's environment before the adapter's code runs;
  *   - a child this process starts on its own executable (process.execPath, as codex-acp starts Codex
  *     and Node's fork does) is still Node: it gets the variable back and this file again, which then
- *     removes the variable there too.
+ *     removes the variable there too. Only when the executable is the file argument of spawn, spawnSync,
+ *     execFile or execFileSync, or the child is a fork: a command line that goes through a shell (exec,
+ *     execSync, or one command string with shell: true) is not recognized, and Electron starts there as
+ *     an app. codex-acp 2.2.2 starts its own executable only the recognized ways.
  * Every other child, and everything those start, sees no ELECTRON_RUN_AS_NODE. The wrapped functions
  * behave as before otherwise, util.promisify(execFile) included.
  */

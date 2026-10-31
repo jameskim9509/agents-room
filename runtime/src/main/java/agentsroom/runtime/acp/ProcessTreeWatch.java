@@ -1,6 +1,7 @@
 package agentsroom.runtime.acp;
 
 import agentsroom.runtime.process.ChildProcessContainment;
+import agentsroom.runtime.process.WebBrowsers;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -22,18 +23,13 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>A sign-in is the exception. codex-acp opens the ChatGPT login page from the adapter's own process
  * (on Windows through PowerShell's {@code Start}), so a browser that was not running yet starts as the
- * adapter's descendant. Once a sign-in began ({@link #spareBrowsers}), web browsers are neither recorded
- * nor killed, and neither is a process the sign-in released from the runtime's job (Windows,
- * {@link ChildProcessContainment#isReleased}): the user's browser, with all its windows, must outlive a
- * stop or a failed sign-in.
+ * adapter's descendant. Once a sign-in began ({@link #spareBrowsers}), web browsers ({@link WebBrowsers})
+ * are neither recorded nor killed: the user's browser, with all its windows, must outlive a stop or a
+ * failed sign-in. Every other process is killed, also one that the sign-in released from the runtime's
+ * job ({@link ChildProcessContainment#isReleased}): a release lets the browser go, not what else the tree
+ * started meanwhile.
  */
 final class ProcessTreeWatch {
-
-    /** Executable names (lower case, without {@code .exe}) of web browsers a login page may open in. */
-    static final Set<String> WEB_BROWSERS = Set.of("chrome", "google-chrome", "google-chrome-stable", "chromium",
-            "chromium-browser", "msedge", "microsoft-edge", "microsoft-edge-stable", "firefox", "brave", "opera",
-            "vivaldi", "whale", "naver-whale-stable", "iexplore", "librewolf", "waterfox", "floorp", "zen",
-            "yandex", "arc");
 
     private static final Duration INTERVAL = Duration.ofSeconds(1);
     private static final Duration KILL_WAIT = Duration.ofSeconds(5);
@@ -52,10 +48,7 @@ final class ProcessTreeWatch {
                 : SCHEDULER.scheduleWithFixedDelay(this::collect, 0, INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
 
-    /**
-     * From now on, web browsers and released processes in the tree are left alone: a sign-in may have
-     * opened one.
-     */
+    /** From now on, web browsers in the tree are left alone: a sign-in may have opened one. */
     void spareBrowsers() {
         spareBrowsers = true;
         synchronized (this) {
@@ -109,15 +102,6 @@ final class ProcessTreeWatch {
     }
 
     private boolean killable(ProcessHandle handle) {
-        return !spareBrowsers || !(isWebBrowser(handle) || ChildProcessContainment.isReleased(handle));
-    }
-
-    private static boolean isWebBrowser(ProcessHandle handle) {
-        return handle.info().command().map(ProcessTreeWatch::namesWebBrowser).orElse(false);
-    }
-
-    /** Whether an executable path names a web browser ({@link #WEB_BROWSERS}). */
-    static boolean namesWebBrowser(String command) {
-        return WEB_BROWSERS.contains(AcpSdkConnection.baseName(command));
+        return !spareBrowsers || !WebBrowsers.isWebBrowser(handle);
     }
 }

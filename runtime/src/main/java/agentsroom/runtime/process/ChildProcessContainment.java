@@ -19,12 +19,13 @@ import org.slf4j.LoggerFactory;
  * <p>A sign-in is the one exception (SCRUM-65): codex-acp opens the ChatGPT login page from the adapter's
  * own process, and a browser that was not running yet starts as the adapter's descendant, so the job
  * would kill the user's browser with the app. Every adapter therefore runs in a job of its own nested in
- * the runtime's ({@link #adopt}), and while one of them signs in ({@link AdapterJob#releaseNewProcesses})
- * both its job and the runtime's let new processes break away: what that adapter's tree starts meanwhile
- * (the browser) leaves the jobs and is the user's. The runtime's job counts the sign-ins in progress and
- * contains again once the last one ended; the other adapters' jobs never let a process go, so their
- * processes stay contained during someone else's sign-in. A process that left is "released": every kill
- * of the runtime's processes spares it ({@link #isReleased}).
+ * the runtime's ({@link #adopt}), and while one of them signs in, for a limited time
+ * ({@link AdapterJob#releaseNewProcesses}), both its job and the runtime's let new processes break away:
+ * what that adapter's tree starts meanwhile (the browser) leaves the jobs. The runtime's job counts the
+ * sign-ins in progress and contains again once the last one ended; the other adapters' jobs never let a
+ * process go, so their processes stay contained during someone else's sign-in. A process that left is
+ * "released" ({@link #isReleased}): the runtime's kills spare it when it is a web browser (the user's,
+ * {@link WebBrowsers}) and kill any other one that is still among the processes they reach.
  *
  * <p>Elsewhere than on Windows this does nothing: only {@link ProcessTreeKiller} on an orderly shutdown
  * kills the children, and only those still in the runtime's process tree.

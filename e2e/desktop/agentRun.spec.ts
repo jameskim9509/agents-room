@@ -24,6 +24,7 @@ import { expect, test } from './fixtures/desktop';
 import {
   agentEvents,
   agentStatus,
+  browserStandIn,
   type DesktopSession,
   DEV_RUNTIME_DESCRIPTOR,
   electronExecutable,
@@ -32,6 +33,7 @@ import {
   expectOfficeConnected,
   isProcessAlive,
   javaProcessesRunning,
+  killAndAwaitExit,
   type MockAgentScenario,
   processesWithArgument,
   readDevRuntimeDescriptor,
@@ -53,6 +55,18 @@ const AGENT_WAIT_MS = 20_000;
 const PROCESS_EXIT_WAIT_MS = 15_000;
 /** A cold JVM, an agent start and a turn or two, with room on a slow CI machine. */
 const TEST_TIMEOUT_MS = 120_000;
+/**
+ * A start that signs in: the mock's sign-in goes on once PowerShell started the
+ * browser stand-in and exited, and a cold PowerShell on a CI machine took longer
+ * than AGENT_WAIT_MS.
+ */
+const SIGN_IN_WAIT_MS = 90_000;
+const SIGN_IN_TEST_TIMEOUT_MS = TEST_TIMEOUT_MS + SIGN_IN_WAIT_MS;
+/**
+ * Milliseconds the mock's browser launcher waits before it starts the stand-in:
+ * set it to try the sign-in spec as on a slow machine.
+ */
+const LAUNCHER_DELAY_MS = Number(process.env['AGENTS_ROOM_TEST_BROWSER_LAUNCHER_DELAY_MS'] ?? 0);
 const READY_LINE_LOGGED = /\[shell\] the runtime is ready on port (\d+)/;
 const LOG_TREE_KILL = '[shell] the runtime is still running; killing its process tree';
 const LOG_RUNTIME_EXITED = '[shell] the runtime exited';
@@ -121,16 +135,19 @@ const PROBE_RUN_AS_NODE: MockAgentScenario = { extends: 'probe-run-as-node' };
 /**
  * Logged out, so starting signs in: the sign-in "opens the login page" like
  * codex-acp on Windows, through a launcher that starts a long-lived browser
- * stand-in (a sleeping node) detached and exits. The mock also starts a child
- * at once (as codex-acp starts Codex) and one during the turn; the launch sets
- * the file it reports their pids in.
+ * stand-in (a sleeping node named like a browser) detached and exits. The mock
+ * also starts a child at once (as codex-acp starts Codex) and one during the
+ * turn; the launch sets the file it reports their pids in.
  */
-const SIGN_IN_WITH_BROWSER: MockAgentScenario = {
-  extends: 'auth-required',
-  childAtStart: true,
-  browserStandIn: [process.execPath, '-e', 'setInterval(() => {}, 1000)'],
-  prompts: [{ stopReason: 'end_turn', steps: [{ spawnChild: true }] }],
-};
+function signInWithBrowser(): MockAgentScenario {
+  return {
+    extends: 'auth-required',
+    childAtStart: true,
+    browserStandIn: [browserStandIn(), '-e', 'setInterval(() => {}, 1000)'],
+    browserLauncherDelayMs: LAUNCHER_DELAY_MS,
+    prompts: [{ stopReason: 'end_turn', steps: [{ spawnChild: true }] }],
+  };
+}
 
 /**
  * Launches the shell on the real runtime with the mock agent, waits for the
@@ -201,11 +218,14 @@ function readMockPids(file: string): Record<string, number> {
   return pids;
 }
 
-async function waitForStatus(page: DesktopSession['window'], agentId: string, status: string) {
+async function waitForStatus(
+  page: DesktopSession['window'],
+  agentId: string,
+  status: string,
+  timeout = AGENT_WAIT_MS,
+) {
   await expect
-    .poll(async () => agentStatus(await rendererRuntimeState(page), agentId), {
-      timeout: AGENT_WAIT_MS,
-    })
+    .poll(async () => agentStatus(await rendererRuntimeState(page), agentId), { timeout })
     .toBe(status);
 }
 
@@ -236,13 +256,14 @@ test.describe('Desktop shell running an agent over ACP', () => {
   });
 
   // A sign-in's browser stand-in outlives the app on purpose: end it, also after a failure or a
-  // time-out (afterEach runs before the fixture removes the launch's temp dir with the pid file).
-  test.afterEach(() => {
-    if (signInPidFile && fs.existsSync(signInPidFile)) {
-      const browser = readMockPids(signInPidFile)['browser'];
-      if (browser && isProcessAlive(browser)) process.kill(browser);
-    }
+  // time-out, and wait until it is gone, before the fixture queries the process table and removes the
+  // launch's temp dir with the pid file (afterEach runs first). The mock's other processes are in the
+  // runtime's job, which the fixture's kill of the runtime ends.
+  test.afterEach(async () => {
+    const file = signInPidFile;
     signInPidFile = null;
+    const browser = file && fs.existsSync(file) ? readMockPids(file)['browser'] : undefined;
+    if (browser) await killAndAwaitExit([browser]);
   });
 
   test('a prompt to the seeded Codex agent streams its events in order to the renderer, and stopping and quitting leave no process @area:desktop-agent', async ({
@@ -460,10 +481,12 @@ test.describe('Desktop shell running an agent over ACP', () => {
       process.platform !== 'win32',
       'Only the Windows runtime contains its children in a job object',
     );
+    test.setTimeout(SIGN_IN_TEST_TIMEOUT_MS);
     const javaBefore = javaProcessesRunning(descriptor!.jar);
     const session = await desktop.launch({
       realRuntime: true,
-      mockAgent: SIGN_IN_WITH_BROWSER,
+      mockAgent: signInWithBrowser(),
+      warmUpPowerShell: true,
       beforeLaunch: ({ tmpBase }) => {
         signInPidFile = path.join(tmpBase, 'mock-pids.txt');
         const scenarioFile = path.join(tmpBase, 'mock-acp-scenario.json');
@@ -475,7 +498,7 @@ test.describe('Desktop shell running an agent over ACP', () => {
     const { agentId } = await openProjectWithAgent(session);
 
     await sendRuntimeCommand(page, { type: 'startAgent', agentId });
-    await waitForStatus(page, agentId, 'ready');
+    await waitForStatus(page, agentId, 'ready', SIGN_IN_WAIT_MS);
     const stages = eventsOfKind(
       agentEvents(await rendererRuntimeState(page), agentId),
       'agentStarting',

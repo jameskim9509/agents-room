@@ -69,6 +69,17 @@ public final class SecretMasker {
      */
     static final int SEAM_HEAD = 256;
 
+    /**
+     * A whitespace run in the kept context is cut to this many characters. The patterns read a run of any
+     * length alike, and {@link #pendingFrom} holds back the spaces after a scheme only up to
+     * {@link #LONGEST_OPEN_START}, so a cut run masks what follows exactly as the whole run would, and a
+     * key name with its separators and scheme always fits into the context (and into {@link #SEAM_HEAD}).
+     */
+    static final int SEAM_WHITESPACE = LONGEST_OPEN_START + 1;
+
+    /** A whitespace run longer than {@link #SEAM_WHITESPACE}: its first characters, then the rest. */
+    private static final Pattern LONG_WHITESPACE = Pattern.compile("(\\s{" + SEAM_WHITESPACE + "})\\s++");
+
     private static final Set<String> secrets = new CopyOnWriteArraySet<>();
 
     /**
@@ -88,7 +99,10 @@ public final class SecretMasker {
     /** The schemes a masked value may start with: {@link #VALUE}'s and {@link #BEARER}'s. */
     private static final Pattern SCHEME = Pattern.compile("(?i)\\b(?:Bearer|Basic)");
     private static final int SCHEME_WORD_LENGTH = "Bearer".length();
-    private static final Pattern AWS_ACCESS_KEY_ID = Pattern.compile("\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b");
+    private static final String AWS_ACCESS_KEY_ID_CHARACTERS = "\\b(?:AKIA|ASIA)[A-Z0-9]{16}";
+    private static final Pattern AWS_ACCESS_KEY_ID = Pattern.compile(AWS_ACCESS_KEY_ID_CHARACTERS + "\\b");
+    /** {@link #AWS_ACCESS_KEY_ID} without what follows it: an ID if the text stopped after it. */
+    private static final Pattern AWS_ACCESS_KEY_ID_END = Pattern.compile(AWS_ACCESS_KEY_ID_CHARACTERS);
     private static final Pattern SK_KEY = Pattern.compile("\\bsk-[A-Za-z0-9_-]{8,}");
 
     private SecretMasker() {
@@ -126,7 +140,9 @@ public final class SecretMasker {
      *
      * <ul>
      *   <li>the start of a secret this masker hides whole (a registered secret, an access key ID, an
-     *       {@code sk-} key) that the next piece may complete, or an access key ID it may undo;
+     *       {@code sk-} key) that the next piece may complete, or an access key ID it may undo, and an
+     *       access key ID right before the start of a registered secret (whole-text masking hides that ID
+     *       once the secret completes);
      *   <li>so that no cut splits such a secret where the part before the cut would not be masked on its
      *       own: the cut moves to the secret's start;
      *   <li>the spaces after a {@code Bearer} or {@code Basic} scheme, which become part of the masked
@@ -142,17 +158,27 @@ public final class SecretMasker {
         String all = context + text;
         int offset = context.length();
         int pending = all.length();
+        // The patterns run on the text as mask() shows it to them: registered secrets already masked.
+        String view = withRegisteredHidden(all);
         for (String secret : secrets) {
-            // A start that began in the context (shown while it was shorter) is held from here on.
-            for (int length = Math.min(secret.length() - 1, all.length()); length >= REGISTERED_START_HOLD; length--) {
-                if (all.endsWith(secret.substring(0, length))) {
-                    pending = Math.min(pending, Math.max(offset, all.length() - length));
-                    break;
+            boolean held = false;
+            for (int length = Math.min(secret.length() - 1, all.length()); length >= 1; length--) {
+                if (!all.endsWith(secret.substring(0, length))) {
+                    continue;
+                }
+                int start = all.length() - length;
+                if (!held && length >= REGISTERED_START_HOLD) {
+                    // A start that began in the context (shown while it was shorter) is held from here on.
+                    pending = Math.min(pending, Math.max(offset, start));
+                    held = true;
+                }
+                // An access key ID right before a start of any length: followed by a letter or digit it is no
+                // ID, but once the secret completes, mask() hides the secret first and then the ID with it.
+                if (isWordCharacter(secret.charAt(0)) && endsAccessKeyId(view, start)) {
+                    pending = Math.min(pending, Math.max(offset, start - AWS_ACCESS_KEY_ID_LENGTH));
                 }
             }
         }
-        // The patterns run on the text as mask() shows it to them: registered secrets already masked.
-        String view = withRegisteredHidden(all);
         for (Pattern pattern : List.of(AWS_ACCESS_KEY_ID, SK_KEY)) {
             Matcher attempt = pattern.matcher(view).useTransparentBounds(true).useAnchoringBounds(false);
             for (int at = Math.max(offset, all.length() - LONGEST_OPEN_START); at < pending; at++) {
@@ -202,14 +228,20 @@ public final class SecretMasker {
         // An access key ID the cut would end: shown alone it is masked, while the text goes on with a letter
         // or digit and is no ID.
         int id = cut - AWS_ACCESS_KEY_ID_LENGTH;
-        if (id >= from && cut < view.length() && isWordCharacter(view.charAt(cut))) {
-            Matcher ending = AWS_ACCESS_KEY_ID.matcher(view.substring(0, cut)).useTransparentBounds(true)
-                    .useAnchoringBounds(false);
-            if (ending.region(id, cut).lookingAt()) {
-                start = Math.min(start, id);
-            }
+        if (id >= from && cut < view.length() && isWordCharacter(view.charAt(cut)) && endsAccessKeyId(view, cut)) {
+            start = Math.min(start, id);
         }
         return start;
+    }
+
+    /** Whether an access key ID ends at {@code end} of {@code view} when the text stopped there. */
+    private static boolean endsAccessKeyId(String view, int end) {
+        int id = end - AWS_ACCESS_KEY_ID_LENGTH;
+        if (id < 0) {
+            return false;
+        }
+        Matcher ending = AWS_ACCESS_KEY_ID_END.matcher(view).useTransparentBounds(true).useAnchoringBounds(false);
+        return ending.region(id, end).lookingAt();
     }
 
     private static boolean isWordCharacter(char c) {
@@ -292,21 +324,27 @@ public final class SecretMasker {
     }
 
     /**
-     * The context to keep after {@code text} was shown, at most {@link #SEAM_CONTEXT} characters: the
-     * end of {@code text}, or, when it ends inside a secret value that started longer ago (a key's
-     * value, a {@code Bearer} value, an {@code sk-} key), that secret's first {@link #SEAM_HEAD}
-     * characters and the end of {@code text}. The middle of such a value is more of the same characters,
-     * so the shortened context masks what follows exactly as the whole would.
+     * The context to keep after {@code text} was shown, at most {@link #SEAM_CONTEXT} characters. First
+     * every whitespace run is cut to {@link #SEAM_WHITESPACE} characters, so that a key name, its
+     * separators and a scheme always fit, however much whitespace separates them from each other and from
+     * the value. Then it keeps the end of that text, or, when it ends inside a secret value that started
+     * longer ago (a key's value, a {@code Bearer} value, an {@code sk-} key), that secret's first
+     * {@link #SEAM_HEAD} characters (its key name, separators and scheme among them) and the end of the
+     * text. The middle of such a value is more of the same characters, and the patterns read a cut
+     * whitespace run like the whole, so the kept context masks what follows exactly as the whole text
+     * would. Registered secrets (the WebSocket token) hold no whitespace.
      */
     static String seamContext(String text) {
-        if (text.length() <= SEAM_CONTEXT) {
-            return text;
+        String compact = text.length() > SEAM_WHITESPACE ? LONG_WHITESPACE.matcher(text).replaceAll("$1") : text;
+        if (compact.length() <= SEAM_CONTEXT) {
+            return compact;
         }
-        int open = openSecretStart(text);
-        if (open >= 0 && text.length() - open > SEAM_CONTEXT) {
-            return text.substring(open, open + SEAM_HEAD) + text.substring(text.length() - (SEAM_CONTEXT - SEAM_HEAD));
+        int open = openSecretStart(compact);
+        if (open >= 0 && compact.length() - open > SEAM_CONTEXT) {
+            return compact.substring(open, open + SEAM_HEAD)
+                    + compact.substring(compact.length() - (SEAM_CONTEXT - SEAM_HEAD));
         }
-        return text.substring(text.length() - SEAM_CONTEXT);
+        return compact.substring(compact.length() - SEAM_CONTEXT);
     }
 
     /** Where the earliest secret value that runs to the end of {@code text} starts, or -1. */

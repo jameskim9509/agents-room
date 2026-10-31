@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import agentsroom.runtime.testsupport.ContainedParent;
+import agentsroom.runtime.testsupport.MockAcpAgent;
 import agentsroom.runtime.testsupport.ReleasingParent;
 import agentsroom.runtime.testsupport.TestProcesses;
 import agentsroom.runtime.testsupport.TestProcesses.StreamCollector;
@@ -29,7 +30,8 @@ import org.slf4j.LoggerFactory;
  * <p>The exception is a sign-in (SCRUM-65): what an adapter's tree starts while it signs in (the browser
  * of the login page) leaves the jobs and outlives the runtime, while every other process stays
  * contained. {@link ReleasingParent} stands in for the runtime there, Node workers for the adapters, and
- * a detached child of a worker for the browser (the way PowerShell's {@code Start} launches one).
+ * detached children of a worker for what a sign-in starts (the way PowerShell's {@code Start} launches a
+ * browser); the one the runtime takes for a browser runs on node named like one.
  */
 @EnabledOnOs(OS.WINDOWS)
 class ChildProcessContainmentTests {
@@ -50,11 +52,19 @@ class ChildProcessContainmentTests {
 
     private final List<ProcessHandle> started = new ArrayList<>();
 
+
     @AfterEach
-    void killLeftovers() {
+    void killLeftovers() throws InterruptedException {
+        List<ProcessHandle> all = new ArrayList<>();
         for (ProcessHandle process : started) {
-            process.descendants().forEach(ProcessHandle::destroyForcibly);
-            process.destroyForcibly();
+            process.descendants().forEach(all::add);
+            all.add(process);
+        }
+        all.forEach(ProcessHandle::destroyForcibly);
+        // isAlive, not onExit: onExit waits on the pid, which a process started since may have taken.
+        long deadline = System.nanoTime() + TIMEOUT.toNanos();
+        while (all.stream().anyMatch(ProcessHandle::isAlive) && System.nanoTime() < deadline) {
+            Thread.sleep(50);
         }
     }
 
@@ -163,22 +173,49 @@ class ChildProcessContainmentTests {
         assertDies(signingIn, late, attached, detached);
     }
 
+    /**
+     * The orderly cleanup spares a web browser the sign-in released, and only that: another process the
+     * adapter's tree started during the sign-in left the jobs too, but the cleanup still ends it.
+     */
     @Test
-    void theRuntimesCleanupOnExitSparesWhatASignInReleased() throws Exception {
+    void theRuntimesCleanupOnExitSparesOnlyTheBrowserASignInReleased() throws Exception {
         Releasing runtime = startReleasing();
         ProcessHandle adapter = runtime.start("a");
         runtime.ask("release a");
-        ProcessHandle browser = runtime.spawn("a", "detached");
+        ProcessHandle browser = runtime.spawn("a", "browser");
+        ProcessHandle released = runtime.spawn("a", "detached");
         runtime.ask("end a");
         ProcessHandle child = runtime.spawn("a", "detached");
-        // Its parent (the worker) still runs, so the browser is one of the runtime's descendants.
-        assertThat(runtime.process().toHandle().descendants()).contains(adapter, browser, child);
+        // Their parent (the worker) still runs, so they are all among the runtime's descendants.
+        assertThat(runtime.process().toHandle().descendants()).contains(adapter, browser, released, child);
 
         // What the orderly shutdown (ChildProcessReaper) and the halt after its grace period do.
         runtime.ask("reap");
 
-        assertDies(adapter, child);
+        assertDies(adapter, released, child);
         assertThat(browser.isAlive()).as("the sign-in's browser outlives the cleanup").isTrue();
+    }
+
+    /**
+     * A sign-in that goes on lets processes go only up to its limit: a browser started before it outlives
+     * the runtime, a process started after it is contained again, and the release still ends once.
+     */
+    @Test
+    void aSignInsReleaseEndsAtItsLimitWhileTheSignInGoesOn() throws Exception {
+        Releasing runtime = startReleasing();
+        ProcessHandle adapter = runtime.start("a");
+        runtime.ask("release a 2");
+        ProcessHandle browser = runtime.spawn("a", "browser");
+        Thread.sleep(Duration.ofSeconds(4));
+        ProcessHandle afterTheLimit = runtime.spawn("a", "browser");
+        // The sign-in's own end afterwards changes nothing.
+        runtime.ask("end a");
+        ProcessHandle runtimesOwn = runtime.track(runtime.ask("direct"));
+
+        runtime.process().destroyForcibly();
+
+        assertDies(adapter, afterTheLimit, runtimesOwn);
+        assertThat(browser.isAlive()).as("started within the limit").isTrue();
     }
 
     /**
@@ -209,14 +246,14 @@ class ChildProcessContainmentTests {
     }
 
     private Releasing startReleasing() throws IOException {
-        List<String> command = List.of(
+        List<String> command = requiringNode(new ArrayList<>(List.of(
                 TestProcesses.javaExecutable(),
                 "--enable-native-access=ALL-UNNAMED",
                 "-cp",
                 TestProcesses.classpathOf(ReleasingParent.class, ChildProcessContainment.class, LoggerFactory.class),
-                ReleasingParent.class.getName());
-        Process process = new ProcessBuilder(requiringNode(command)).redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
+                ReleasingParent.class.getName())));
+        command.add(MockAcpAgent.browserStandIn().toString());
+        Process process = new ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start();
         started.add(process.toHandle());
         return new Releasing(process);
     }

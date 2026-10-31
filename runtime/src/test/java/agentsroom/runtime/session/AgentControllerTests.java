@@ -19,6 +19,7 @@ import agentsroom.contract.PermissionOptionKind;
 import agentsroom.contract.PermissionOutcome;
 import agentsroom.contract.PermissionRequestedEvent;
 import agentsroom.contract.PermissionResolvedEvent;
+import agentsroom.contract.PlanEvent;
 import agentsroom.contract.Readiness;
 import agentsroom.contract.RejectReason;
 import agentsroom.contract.RunEndedEvent;
@@ -28,6 +29,7 @@ import agentsroom.contract.ServerMessage;
 import agentsroom.contract.SessionEndReason;
 import agentsroom.contract.SessionEndedEvent;
 import agentsroom.contract.Stage;
+import agentsroom.contract.ToolCallUpdateEvent;
 import agentsroom.runtime.acp.AgentCallException;
 import agentsroom.runtime.acp.AgentConnection;
 import agentsroom.runtime.acp.AgentConnectionFactory;
@@ -224,6 +226,39 @@ class AgentControllerTests {
                 ((AgentMessageChunkEvent) event).getData().getText())
                 .containsExactly("the key ", "sk-moc");
         assertThat(after.get(1).getRunId()).as("still the run's text").isEqualTo(after.get(2).getRunId());
+        assertThat(seqs()).isSorted().doesNotHaveDuplicates();
+    }
+
+    /**
+     * ADR 0005 decision 11, command output: the start of a key at the end of a piece is held back. A chunk
+     * leaves it held, the next piece of the same terminal masks it with the rest, and the next other event
+     * takes what is still held first, masked as it stands, in an update of its own that carries only that
+     * output.
+     */
+    @Test
+    void heldCommandOutputGoesOutWithTheNextPieceOrInItsOwnUpdateBeforeTheNextEvent() throws Exception {
+        FakeConnection connection = startReady();
+        controller.sendPrompt("go", this::reject);
+        awaitStatus(AgentStatus.RUNNING);
+        int before = events().size();
+
+        connection.listener.onUpdate(connection.sessionId, output("call-1", "the key sk-moc"), 1);
+        connection.listener.onUpdate(connection.sessionId, chunk("thinking"), 2);
+        connection.listener.onUpdate(connection.sessionId, output("call-1", "kmockmock done. sk-ab"), 3);
+        connection.listener.onUpdate(connection.sessionId, new AgentUpdate.Plan(List.of()), 4);
+        awaitEvent(PlanEvent.class, event -> true);
+
+        List<AgentEvent> after = events().subList(before, events().size());
+        assertThat(after).extracting(event -> event.getClass().getSimpleName()).containsExactly(
+                "ToolCallUpdateEvent", "AgentMessageChunkEvent", "ToolCallUpdateEvent", "ToolCallUpdateEvent",
+                "PlanEvent");
+        assertThat(after.stream().filter(ToolCallUpdateEvent.class::isInstance)
+                .map(event -> ((ToolCallUpdateEvent) event).getData().getToolCall().getVendorMeta())
+                .map(meta -> String.valueOf(((Map<?, ?>) meta.get("terminal_output")).get("data"))).toList())
+                .containsExactly("the key ", "**** done. ", "sk-ab");
+        assertThat(((ToolCallUpdateEvent) after.get(3)).getData().getToolCall().getVendorMeta())
+                .as("only the held output").containsOnlyKeys("terminal_output");
+        assertThat(after.get(3).getReceivedAt()).as("the time of its piece").isEqualTo(3);
         assertThat(seqs()).isSorted().doesNotHaveDuplicates();
     }
 
@@ -568,6 +603,13 @@ class AgentControllerTests {
 
     private static AgentUpdate chunk(String text) {
         return new AgentUpdate.Chunk(AgentUpdate.ChunkKind.AGENT, null, "text", text);
+    }
+
+    /** A piece of command output, as the port hands it over: raw, with the data left empty in _meta. */
+    private static AgentUpdate output(String toolCallId, String data) {
+        return new AgentUpdate.ToolCallReport(false, toolCallId, null, null, null, null, null, null, null,
+                Map.of("terminal_output", Map.of("data", "", "terminal_id", toolCallId)),
+                new AgentUpdate.TerminalOutput(toolCallId, data));
     }
 
     private static PermissionAsk ask() {
