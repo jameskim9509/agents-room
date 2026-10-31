@@ -12,7 +12,8 @@ import org.springframework.stereotype.Component;
 /**
  * Ends the runtime process: closes the Spring context (which stops adapters and kills their trees),
  * then exits. If closing takes longer than {@link #GRACE_PERIOD}, it kills the remaining descendants
- * and halts, so a stuck bean can never keep an orphaned runtime alive.
+ * (but not a sign-in's browser, {@link ProcessTreeKiller#killDescendants}) and halts, so a stuck bean can
+ * never keep an orphaned runtime alive.
  */
 @Component
 public class RuntimeShutdown {

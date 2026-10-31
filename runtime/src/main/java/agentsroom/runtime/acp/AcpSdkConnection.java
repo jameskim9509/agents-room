@@ -1,6 +1,8 @@
 package agentsroom.runtime.acp;
 
 import agentsroom.runtime.logging.SecretMasker;
+import agentsroom.runtime.process.AdapterJob;
+import agentsroom.runtime.process.ChildProcessContainment;
 import com.agentclientprotocol.sdk.client.AcpAsyncClient;
 import com.agentclientprotocol.sdk.client.AcpClient;
 import com.agentclientprotocol.sdk.client.transport.AgentParameters;
@@ -41,7 +43,9 @@ import tools.jackson.core.JacksonException;
  *   <li>The adapter's stderr goes, masked, to the runtime log with the agent's prefix (ADR 0003 decision
  *       9) on the logger {@value #STDERR_LOGGER}.
  *   <li>The SDK has no getter for the process, so the new child is found by comparing the runtime's
- *       children before and after the start, with every start of this class behind one lock (D13).
+ *       children before and after the start, with every start of this class behind one lock (D13). On
+ *       Windows it then gets a job object of its own ({@link ChildProcessContainment#adopt}), which lets
+ *       the processes it starts during a sign-in go: the login page's browser outlives the app.
  *   <li>An exit, a protocol error or a late message after {@link #close} or {@link #kill} is never
  *       reported: the runtime asked for the end.
  * </ul>
@@ -68,6 +72,14 @@ final class AcpSdkConnection implements AgentConnection {
     private static final Pattern WINDOWS_ERROR = Pattern.compile("error=(\\d+)");
     private static final Set<String> MISSING_EXECUTABLE_ERRORS = Set.of("2", "3");
 
+    /**
+     * How long a sign-in lets the processes its adapter's tree starts leave the job objects at most. codex-acp
+     * opens the login page within seconds of the authenticate call (a cold PowerShell included); the user
+     * then signs in in that browser, which needs no new process of the tree. A browser started later is
+     * contained again and ends with the app.
+     */
+    static final Duration SIGN_IN_RELEASE_LIMIT = Duration.ofSeconds(60);
+
     /** One start at a time, so the before/after comparison of the children finds the right process. */
     private static final Object SPAWN_LOCK = new Object();
 
@@ -76,16 +88,18 @@ final class AcpSdkConnection implements AgentConnection {
     private final AcpTranslator translator;
     private final ProcessHandle process;
     private final ProcessTreeWatch tree;
+    private final AdapterJob job;
     private final AtomicBoolean ending;
     private final AtomicBoolean killed = new AtomicBoolean();
 
     private AcpSdkConnection(String label, AcpAsyncClient client, AcpTranslator translator, ProcessHandle process,
-            AtomicBoolean ending) {
+            AdapterJob job, AtomicBoolean ending) {
         this.label = label;
         this.client = client;
         this.translator = translator;
         this.process = process;
         this.tree = new ProcessTreeWatch(process);
+        this.job = job;
         this.ending = ending;
     }
 
@@ -170,6 +184,7 @@ final class AcpSdkConnection implements AgentConnection {
 
         AcpAsyncClient client;
         ProcessHandle process;
+        AdapterJob job;
         synchronized (SPAWN_LOCK) {
             Set<ProcessHandle> before = ProcessHandle.current().children().collect(Collectors.toSet());
             try {
@@ -178,13 +193,15 @@ final class AcpSdkConnection implements AgentConnection {
                 throw startFailure(e, argv.getFirst());
             }
             process = identify(before, argv.getFirst());
+            // At once: an adapter starts children of its own (codex-acp: Codex) only once Node has loaded it.
+            job = process == null ? AdapterJob.none() : ChildProcessContainment.adopt(process);
         }
         if (process == null) {
             log.warn("[{}] Could not identify the adapter process; its process tree cannot be killed", label);
         } else {
             log.info("[{}] Adapter started (pid {})", label, process.pid());
         }
-        AcpSdkConnection connection = new AcpSdkConnection(label, client, translator, process, ending);
+        AcpSdkConnection connection = new AcpSdkConnection(label, client, translator, process, job, ending);
         transport.awaitTermination().subscribe(ignored -> {
         }, error -> {
             if (ending.get()) {
@@ -193,6 +210,7 @@ final class AcpSdkConnection implements AgentConnection {
             String detail = SecretMasker.mask(String.valueOf(error.getMessage()));
             log.warn("[{}] Adapter ended without being asked: {}", label, detail);
             connection.tree.killAll();
+            connection.job.close();
             listener.onExit(exitCode(detail), detail, clock.millis());
         });
         return connection;
@@ -218,11 +236,22 @@ final class AcpSdkConnection implements AgentConnection {
         return new AgentHandshake(version, AcpTranslator.agentInfo(response.agentInfo()), methods, pushes);
     }
 
+    /**
+     * The sign-in. codex-acp opens the login page from its own process, so a browser that was not
+     * running yet starts in this tree: the tree kill spares web browsers from now on, and until the answer
+     * (success, failure, time-out, or the end of the connection), but at most for
+     * {@link #SIGN_IN_RELEASE_LIMIT}, the processes the tree starts leave the job objects (Windows), so that
+     * the browser outlives the app too (SCRUM-65).
+     */
     @Override
     public void authenticate(String methodId, Duration timeout) throws AgentCallException {
-        // codex-acp opens the login page from its own process: a browser it starts is in this tree.
         tree.spareBrowsers();
-        await(client.authenticate(new AcpSchema.AuthenticateRequest(methodId)), timeout);
+        AdapterJob.Release release = job.releaseNewProcesses(SIGN_IN_RELEASE_LIMIT);
+        try {
+            await(client.authenticate(new AcpSchema.AuthenticateRequest(methodId)), timeout);
+        } finally {
+            release.close();
+        }
     }
 
     @Override
@@ -269,6 +298,7 @@ final class AcpSdkConnection implements AgentConnection {
         if (!tree.killAll()) {
             log.warn("[{}] Some adapter processes were still alive after the kill", label);
         }
+        job.close();
         log.info("[{}] Adapter closed", label);
     }
 
@@ -282,6 +312,7 @@ final class AcpSdkConnection implements AgentConnection {
         if (!tree.killAll()) {
             log.warn("[{}] Some adapter processes were still alive after the kill", label);
         }
+        job.close();
         client.close();
         log.info("[{}] Adapter killed", label);
     }

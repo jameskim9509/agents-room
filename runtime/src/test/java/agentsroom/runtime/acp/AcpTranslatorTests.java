@@ -70,23 +70,18 @@ class AcpTranslatorTests {
     }
 
     @Test
-    void chunksKeepTheirMessageIdAndOnlyTextHasText() throws Exception {
+    void chunksKeepTheirMessageIdAndOnlyTextHasTextWhichStaysRaw() throws Exception {
+        String key = String.join("-", "sk", "abcdefghijklmnop");
         AgentUpdate text = translator.update(sessionUpdate("""
-                {"sessionUpdate":"agent_message_chunk","messageId":"m1","content":{"type":"text","text":"hi"}}"""));
+                {"sessionUpdate":"agent_message_chunk","messageId":"m1","content":{"type":"text","text":"key %s"}}"""
+                .formatted(key)));
         AgentUpdate image = translator.update(sessionUpdate("""
                 {"sessionUpdate":"agent_thought_chunk",
                  "content":{"type":"image","data":"aGk=","mimeType":"image/png"}}"""));
 
-        assertThat(text).isInstanceOfSatisfying(AgentUpdate.Chunk.class, chunk -> {
-            assertThat(chunk.kind()).isEqualTo(AgentUpdate.ChunkKind.AGENT);
-            assertThat(chunk.data().getMessageId()).isEqualTo("m1");
-            assertThat(chunk.data().getText()).isEqualTo("hi");
-        });
-        assertThat(image).isInstanceOfSatisfying(AgentUpdate.Chunk.class, chunk -> {
-            assertThat(chunk.kind()).isEqualTo(AgentUpdate.ChunkKind.THOUGHT);
-            assertThat(chunk.data().getContentType()).isEqualTo("image");
-            assertThat(chunk.data().getText()).isNull();
-        });
+        // Chunk text is the one value the port leaves unmasked: the session masks it across the seams.
+        assertThat(text).isEqualTo(new AgentUpdate.Chunk(AgentUpdate.ChunkKind.AGENT, "m1", "text", "key " + key));
+        assertThat(image).isEqualTo(new AgentUpdate.Chunk(AgentUpdate.ChunkKind.THOUGHT, null, "image", null));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package agentsroom.runtime.harness;
 
+import agentsroom.runtime.persistence.RuntimeDataDirectory;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -12,6 +13,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.system.ApplicationHome;
 import org.springframework.core.env.Environment;
@@ -40,8 +43,13 @@ import tools.jackson.databind.json.JsonMapper;
  * <p>The shell passes its own Electron executable as {@value #NODE} and sets {@value #NODE_ELECTRON} to
  * {@code 1} (ADR 0003 decision 12). A launch whose executable is that file, the installed adapter's or
  * an override's, then adds {@code ELECTRON_RUN_AS_NODE=1} to the adapter's environment, so Electron
- * runs as plain Node. The adapter's children inherit it: codex-acp starts Codex through {@code
- * process.execPath}, which is Electron again.
+ * runs as plain Node, and loads {@link ElectronAsNodePreload} first ({@code <electron> --require
+ * <preload> ...}). The preload keeps the variable to the adapter's own Node processes: codex-acp starts
+ * Codex through {@code process.execPath}, which is Electron again and still runs as Node, while the
+ * commands Codex runs never see the variable. That holds for a child started with the executable as the
+ * file argument of {@code spawn}, {@code execFile} and their sync forms, or a {@code fork}; one started
+ * through a shell ({@code exec}, {@code shell: true}) starts Electron as an app (ElectronAsNodePreload). A
+ * launch on a plain node gets neither.
  *
  * <p>Never {@code npx} and never {@code cmd /c}: Java cannot start {@code npx} on Windows, and cmd.exe
  * parses arguments again (ADR 0003).
@@ -67,6 +75,11 @@ public class HarnessLauncher {
     /** What a launch on the shell's Electron adds to the adapter's environment. */
     static final Map<String, String> RUN_AS_NODE = Map.of("ELECTRON_RUN_AS_NODE", "1");
 
+    /** Node's option that loads a script before the adapter's own code. */
+    static final String REQUIRE = "--require";
+
+    private static final Logger log = LoggerFactory.getLogger(HarnessLauncher.class);
+
     /** How far above the runtime's code location the adapters folder is looked for. */
     private static final int SEARCH_DEPTH = 8;
 
@@ -77,6 +90,7 @@ public class HarnessLauncher {
 
     private final Function<String, String> lookup;
     private final Path codeLocation;
+    private final ElectronAsNodePreload preload;
 
     /** The last resolution per harness, for the readiness of a snapshot (no disk access there). */
     private final Map<String, Boolean> available = new ConcurrentHashMap<>();
@@ -86,21 +100,23 @@ public class HarnessLauncher {
      * falls back to {@link System#getenv(String)}, which on Windows finds {@code Path} for {@code PATH}.
      */
     @Autowired
-    HarnessLauncher(Environment environment) {
+    HarnessLauncher(Environment environment, RuntimeDataDirectory dataDirectory) {
         this(name -> {
             String value = environment.getProperty(name);
             return value != null ? value : System.getenv(name);
-        }, new ApplicationHome(HarnessLauncher.class).getDir().toPath());
+        }, new ApplicationHome(HarnessLauncher.class).getDir().toPath(), new ElectronAsNodePreload(dataDirectory.root()));
     }
 
     /**
      * @param lookup the runtime's environment variables (and, in tests, properties of the same names)
      * @param codeLocation where to start looking for {@code tools/adapters} when {@value #ADAPTERS_DIR}
      *     is not set
+     * @param preload the script a launch on the shell's Electron loads first
      */
-    public HarnessLauncher(Function<String, String> lookup, Path codeLocation) {
+    public HarnessLauncher(Function<String, String> lookup, Path codeLocation, ElectronAsNodePreload preload) {
         this.lookup = lookup;
         this.codeLocation = codeLocation;
+        this.preload = preload;
     }
 
     /** The environment variable of a harness's command override, e.g. {@value #CODEX_COMMAND}. */
@@ -155,7 +171,8 @@ public class HarnessLauncher {
         }
         HarnessLaunch node = node();
         if (node instanceof HarnessLaunch.Ready ready) {
-            return new HarnessLaunch.Ready(List.of(ready.argv().getFirst(), script.toAbsolutePath().toString()),
+            List<String> argv = List.of(ready.argv().getFirst(), script.toAbsolutePath().toString());
+            return new HarnessLaunch.Ready(ready.environment().isEmpty() ? argv : asNode(argv),
                     "installed adapter " + ADAPTERS_FOLDER, ready.environment());
         }
         return node;
@@ -187,7 +204,28 @@ public class HarnessLauncher {
         if (executable.isAbsolute() && !Files.isRegularFile(executable)) {
             return new HarnessLaunch.Unavailable(variable + " names an executable that does not exist: " + executable);
         }
-        return new HarnessLaunch.Ready(command, variable, isShellElectron(executable) ? RUN_AS_NODE : Map.of());
+        return isShellElectron(executable) ? new HarnessLaunch.Ready(asNode(command), variable, RUN_AS_NODE)
+                : new HarnessLaunch.Ready(command, variable);
+    }
+
+    /**
+     * {@code argv} of a launch on the shell's Electron, with the preload right after the executable.
+     * Should the data directory refuse the file, the adapter still starts as before, and its children
+     * inherit the variable.
+     */
+    private List<String> asNode(List<String> argv) {
+        try {
+            List<String> withPreload = new ArrayList<>(argv.size() + 2);
+            withPreload.add(argv.getFirst());
+            withPreload.add(REQUIRE);
+            withPreload.add(preload.file().toString());
+            withPreload.addAll(argv.subList(1, argv.size()));
+            return withPreload;
+        } catch (IOException | RuntimeException e) {
+            log.warn("Could not write {}; the adapter's children inherit ELECTRON_RUN_AS_NODE",
+                    ElectronAsNodePreload.FILE_NAME, e);
+            return argv;
+        }
     }
 
     /**

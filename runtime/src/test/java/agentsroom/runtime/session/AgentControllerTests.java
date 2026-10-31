@@ -7,26 +7,29 @@ import agentsroom.contract.AgentErrorEvent;
 import agentsroom.contract.AgentEvent;
 import agentsroom.contract.AgentEventMessage;
 import agentsroom.contract.AgentInfo;
+import agentsroom.contract.AgentMessageChunkEvent;
 import agentsroom.contract.AgentStartingEvent;
 import agentsroom.contract.AgentStatus;
 import agentsroom.contract.AgentStatusChangedEvent;
 import agentsroom.contract.AuthMethodInfo;
 import agentsroom.contract.AuthStatus;
 import agentsroom.contract.ErrorCode;
-import agentsroom.contract.MessageChunkData;
 import agentsroom.contract.PermissionOption;
 import agentsroom.contract.PermissionOptionKind;
 import agentsroom.contract.PermissionOutcome;
 import agentsroom.contract.PermissionRequestedEvent;
 import agentsroom.contract.PermissionResolvedEvent;
+import agentsroom.contract.PlanEvent;
 import agentsroom.contract.Readiness;
 import agentsroom.contract.RejectReason;
 import agentsroom.contract.RunEndedEvent;
 import agentsroom.contract.RunOutcome;
+import agentsroom.contract.RunStartedEvent;
 import agentsroom.contract.ServerMessage;
 import agentsroom.contract.SessionEndReason;
 import agentsroom.contract.SessionEndedEvent;
 import agentsroom.contract.Stage;
+import agentsroom.contract.ToolCallUpdateEvent;
 import agentsroom.runtime.acp.AgentCallException;
 import agentsroom.runtime.acp.AgentConnection;
 import agentsroom.runtime.acp.AgentConnectionFactory;
@@ -37,6 +40,7 @@ import agentsroom.runtime.acp.OpenedSession;
 import agentsroom.runtime.acp.PermissionAnswer;
 import agentsroom.runtime.acp.PermissionAsk;
 import agentsroom.runtime.agent.AgentConfig;
+import agentsroom.runtime.harness.ElectronAsNodePreload;
 import agentsroom.runtime.harness.HarnessLauncher;
 import agentsroom.runtime.permission.PermissionBroker;
 import java.nio.file.Path;
@@ -192,12 +196,95 @@ class AgentControllerTests {
 
         first.listener.onUpdate(first.sessionId, chunk("from the old process"), 0);
         second.listener.onUpdate(second.sessionId, chunk("from the new process"), 0);
-        awaitEvent(agentsroom.contract.AgentMessageChunkEvent.class, event -> true);
+        awaitEvent(AgentMessageChunkEvent.class, event -> true);
 
         List<AgentEvent> after = events().subList(before, events().size());
         assertThat(after).singleElement().satisfies(event -> assertThat(
-                ((agentsroom.contract.AgentMessageChunkEvent) event).getData().getText())
+                ((AgentMessageChunkEvent) event).getData().getText())
                 .isEqualTo("from the new process"));
+    }
+
+    /**
+     * ADR 0005 decision 11: the start of a key at the end of a chunk is held back; the next event of the
+     * agent takes it first, in its own chunk event, so the text keeps its place in seq order.
+     */
+    @Test
+    void aHeldStartOfAKeyGoesOutBeforeTheNextEventInSeqOrder() throws Exception {
+        FakeConnection connection = startReady();
+        controller.sendPrompt("go", this::reject);
+        awaitStatus(AgentStatus.RUNNING);
+        int before = events().size();
+
+        connection.listener.onUpdate(connection.sessionId, chunk("the key sk-moc"), 1);
+        connection.prompt.complete("end_turn");
+        awaitEvent(RunEndedEvent.class, event -> true);
+
+        List<AgentEvent> after = events().subList(before, events().size());
+        assertThat(after).extracting(event -> event.getClass().getSimpleName()).startsWith("AgentMessageChunkEvent",
+                "AgentMessageChunkEvent", "RunEndedEvent");
+        assertThat(after.subList(0, 2)).extracting(event ->
+                ((AgentMessageChunkEvent) event).getData().getText())
+                .containsExactly("the key ", "sk-moc");
+        assertThat(after.get(1).getRunId()).as("still the run's text").isEqualTo(after.get(2).getRunId());
+        assertThat(seqs()).isSorted().doesNotHaveDuplicates();
+    }
+
+    /**
+     * ADR 0005 decision 11, command output: the start of a key at the end of a piece is held back. A chunk
+     * leaves it held, the next piece of the same terminal masks it with the rest, and the next other event
+     * takes what is still held first, masked as it stands, in an update of its own that carries only that
+     * output.
+     */
+    @Test
+    void heldCommandOutputGoesOutWithTheNextPieceOrInItsOwnUpdateBeforeTheNextEvent() throws Exception {
+        FakeConnection connection = startReady();
+        controller.sendPrompt("go", this::reject);
+        awaitStatus(AgentStatus.RUNNING);
+        int before = events().size();
+
+        connection.listener.onUpdate(connection.sessionId, output("call-1", "the key sk-moc"), 1);
+        connection.listener.onUpdate(connection.sessionId, chunk("thinking"), 2);
+        connection.listener.onUpdate(connection.sessionId, output("call-1", "kmockmock done. sk-ab"), 3);
+        connection.listener.onUpdate(connection.sessionId, new AgentUpdate.Plan(List.of()), 4);
+        awaitEvent(PlanEvent.class, event -> true);
+
+        List<AgentEvent> after = events().subList(before, events().size());
+        assertThat(after).extracting(event -> event.getClass().getSimpleName()).containsExactly(
+                "ToolCallUpdateEvent", "AgentMessageChunkEvent", "ToolCallUpdateEvent", "ToolCallUpdateEvent",
+                "PlanEvent");
+        assertThat(after.stream().filter(ToolCallUpdateEvent.class::isInstance)
+                .map(event -> ((ToolCallUpdateEvent) event).getData().getToolCall().getVendorMeta())
+                .map(meta -> String.valueOf(((Map<?, ?>) meta.get("terminal_output")).get("data"))).toList())
+                .containsExactly("the key ", "**** done. ", "sk-ab");
+        assertThat(((ToolCallUpdateEvent) after.get(3)).getData().getToolCall().getVendorMeta())
+                .as("only the held output").containsOnlyKeys("terminal_output");
+        assertThat(after.get(3).getReceivedAt()).as("the time of its piece").isEqualTo(3);
+        assertThat(seqs()).isSorted().doesNotHaveDuplicates();
+    }
+
+    /**
+     * Text an adapter sends between runs is no run's: a start it held back goes out before the next run
+     * starts, without that run's id, and the run's own text starts a new stream.
+     */
+    @Test
+    void textHeldBackBetweenRunsGoesOutBeforeTheNextRunAndOutsideIt() throws Exception {
+        FakeConnection connection = startReady();
+        int before = events().size();
+
+        connection.listener.onUpdate(connection.sessionId, chunk("between runs sk-moc"), 1);
+        awaitEvent(AgentMessageChunkEvent.class, event -> event.getData().getText().equals("between runs "));
+        controller.sendPrompt("go", this::reject);
+        RunStartedEvent started = awaitEvent(RunStartedEvent.class, event -> true);
+        connection.listener.onUpdate(connection.sessionId, chunk("kmockmock"), 2);
+        awaitEvent(AgentMessageChunkEvent.class, event -> event.getData().getText().equals("kmockmock"));
+
+        List<AgentEvent> after = events().subList(before, events().size());
+        assertThat(after).extracting(event -> event.getClass().getSimpleName()).startsWith("AgentMessageChunkEvent",
+                "AgentMessageChunkEvent", "RunStartedEvent");
+        assertThat(((AgentMessageChunkEvent) after.get(1)).getData().getText()).isEqualTo("sk-moc");
+        assertThat(after.get(1).getRunId()).as("held before the run").isNull();
+        assertThat(after.getLast().getRunId()).isEqualTo(started.getRunId());
+        assertThat(seqs()).isSorted().doesNotHaveDuplicates();
     }
 
     @Test
@@ -389,7 +476,8 @@ class AgentControllerTests {
 
     private AgentController newController() {
         HarnessLauncher launcher = new HarnessLauncher(
-                Map.of(HarnessLauncher.CODEX_COMMAND, "[\"fake-adapter\"]")::get, project);
+                Map.of(HarnessLauncher.CODEX_COMMAND, "[\"fake-adapter\"]")::get, project,
+                new ElectronAsNodePreload(project.resolve("preload")));
         AgentTimeouts timeouts = new AgentTimeouts(Duration.ofSeconds(5), Duration.ofMillis(300), Duration.ofSeconds(5),
                 Duration.ofSeconds(5), Duration.ofMillis(300), Duration.ofSeconds(1));
         StatePublisher publisher = change -> {
@@ -514,10 +602,14 @@ class AgentControllerTests {
     }
 
     private static AgentUpdate chunk(String text) {
-        MessageChunkData data = new MessageChunkData();
-        data.setContentType("text");
-        data.setText(text);
-        return new AgentUpdate.Chunk(AgentUpdate.ChunkKind.AGENT, data);
+        return new AgentUpdate.Chunk(AgentUpdate.ChunkKind.AGENT, null, "text", text);
+    }
+
+    /** A piece of command output, as the port hands it over: raw, with the data left empty in _meta. */
+    private static AgentUpdate output(String toolCallId, String data) {
+        return new AgentUpdate.ToolCallReport(false, toolCallId, null, null, null, null, null, null, null,
+                Map.of("terminal_output", Map.of("data", "", "terminal_id", toolCallId)),
+                new AgentUpdate.TerminalOutput(toolCallId, data));
     }
 
     private static PermissionAsk ask() {

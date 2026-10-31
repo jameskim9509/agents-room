@@ -37,6 +37,29 @@
  *   authenticate: "succeed" | "fail" | "never" | "succeed-without-login"
  *                              succeed logs in and pushes an "account" status;
  *                              the last answers success but stays logged out
+ *   browserStandIn: [executable, ...args]
+ *                              every authenticate (however it then ends) first
+ *                              "opens the login page" like codex-acp: a launcher
+ *                              starts this long-lived command (on Windows
+ *                              PowerShell's Start-Process, as codex-acp's `Start`;
+ *                              elsewhere a detached spawn), and the sign-in goes
+ *                              on once the launcher exited, as codex-acp's `open`
+ *                              waits for PowerShell. The command is the browser
+ *                              stand-in (the runtime knows a browser by its
+ *                              executable's name); the mock never ends it
+ *   browserLauncher: "exits" | "stays"
+ *                              "stays": the launcher runs on after the start (the
+ *                              mock never ends it), so the stand-in stays a
+ *                              descendant of the adapter; the sign-in goes on once
+ *                              the stand-in started ("exits")
+ *   browserLauncherDelayMs: N  the launcher waits N ms before it starts the
+ *                              stand-in: a slow or cold PowerShell (0)
+ *   pidFile: "file"            appends "<role> <pid>" lines: "adapter" (the mock),
+ *                              "startup-child", "browser-launcher", "browser" (as
+ *                              soon as the launcher reports it started it) and
+ *                              "child" (spawnChild)
+ *   childAtStart: true         starts a long-lived child before reading stdin, as
+ *                              codex-acp starts Codex's app-server
  *   sessionNew: "answer" | "never" | {error: {code, message}}
  *   updatesBeforeSessionNewAnswer: [update]
  *                              session/updates sent just before the session/new
@@ -68,6 +91,19 @@
  *                              pid in an agent message. The mock never ends it,
  *                              like codex.exe leaving git.exe behind: only the
  *                              runtime's process-tree kill does
+ *   {probeRunAsNode: true}     reports, as a completed "execute" tool call's
+ *                              rawOutput, who sees ELECTRON_RUN_AS_NODE: the mock
+ *                              itself, a command it runs, and a child it starts on
+ *                              its own executable with its own environment (as
+ *                              codex-acp starts Codex: "codex"), with the command
+ *                              that child runs; the same child once more through
+ *                              util.promisify(execFile), the way codex-acp runs
+ *                              its helper commands ("execFileChild"). Each part
+ *                              says whether it runs on Electron
+ *                              ("electron": the version or null) and was started
+ *                              with a --require preload. A child that never
+ *                              answers (an Electron app instead of Node) is
+ *                              reported as {answered: false}
  *   {waitForCancel: true}      waits for session/cancel; the turn then answers
  *                              "cancelled"
  *   {stderr: "line"}           a line on stderr
@@ -81,9 +117,16 @@
  */
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { execFile, spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const readline = require('node:readline');
+const { promisify } = require('node:util');
+
+/** The argument that makes this script the probe child of {probeRunAsNode}. */
+const PROBE_CHILD = '--probe-run-as-node-child';
+const RUN_AS_NODE = 'ELECTRON_RUN_AS_NODE';
+/** How long {probeRunAsNode} waits for its child; an Electron app would never answer. */
+const PROBE_CHILD_WAIT_MS = 10_000;
 
 const AUTH_REQUIRED = -32000;
 const METHOD_NOT_FOUND = -32601;
@@ -96,6 +139,49 @@ function textUpdate(sessionUpdate, text, messageId) {
   const update = { sessionUpdate, content: { type: 'text', text } };
   if (messageId) update.messageId = messageId;
   return { update };
+}
+
+/**
+ * A command that shows a terminal, as codex-acp reports it to a client that declares
+ * `_meta.terminal_output`: the tool call names the terminal (its id is the tool call's), each piece of
+ * output is a tool_call_update of its own with `_meta.terminal_output: {data, terminal_id}`, and the end
+ * carries `terminal_exit`.
+ */
+function terminalCommand(toolCallId, command) {
+  return {
+    update: {
+      sessionUpdate: 'tool_call',
+      toolCallId,
+      title: `Run ${command.join(' ')}`,
+      kind: 'execute',
+      status: 'in_progress',
+      rawInput: { command },
+      content: [{ type: 'terminal', terminalId: toolCallId }],
+      _meta: { terminal_info: { cwd: '${cwd}', terminal_id: toolCallId } },
+    },
+  };
+}
+
+function terminalOutput(toolCallId, data, fields = {}) {
+  return {
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      ...fields,
+      _meta: { ...fields._meta, terminal_output: { data, terminal_id: toolCallId } },
+    },
+  };
+}
+
+function terminalExit(toolCallId, exitCode) {
+  return {
+    update: {
+      sessionUpdate: 'tool_call_update',
+      toolCallId,
+      status: exitCode === 0 ? 'completed' : 'failed',
+      _meta: { terminal_exit: { exit_code: exitCode, signal: null, terminal_id: toolCallId } },
+    },
+  };
 }
 
 const HAPPY = {
@@ -494,6 +580,44 @@ const SCENARIOS = {
     ],
   },
   burst: { prompts: [{ stopReason: 'end_turn', steps: [{ burst: 300 }] }] },
+  // Who sees ELECTRON_RUN_AS_NODE (ADR 0003 decision 12): the mock, its command, its Node child.
+  'probe-run-as-node': {
+    prompts: [{ stopReason: 'end_turn', steps: [{ probeRunAsNode: true }] }],
+  },
+  // Command output in pieces (ADR 0005 decision 11): a key split across two pieces of one command, a
+  // key-value split across three of another while a third command's output and a message come between,
+  // and output that did not stream arriving with the end of its command.
+  'terminal-output': {
+    prompts: [
+      {
+        stopReason: 'end_turn',
+        steps: [
+          terminalCommand('call-cat', ['cat', 'notes.txt']),
+          terminalOutput('call-cat', `notes\nthe key ${FAKE_API_KEY.slice(0, 6)}`),
+          terminalOutput('call-cat', `${FAKE_API_KEY.slice(6)} stays hidden.\n`),
+          terminalExit('call-cat', 0),
+          terminalCommand('call-env', ['cat', '.env']),
+          terminalCommand('call-ls', ['ls']),
+          terminalOutput('call-env', 'PATH=/usr/bin\nOPENAI_API_KEY='),
+          terminalOutput('call-ls', 'README.md\n'),
+          terminalOutput('call-env', FAKE_API_KEY.slice(0, 9)),
+          textUpdate('agent_thought_chunk', 'Reading the environment.'),
+          terminalOutput('call-env', `${FAKE_API_KEY.slice(9)}\nDEBUG=1\n`),
+          terminalExit('call-env', 0),
+          terminalOutput('call-ls', 'notes.txt\n', {
+            status: 'completed',
+            _meta: { terminal_exit: { exit_code: 0, signal: null, terminal_id: 'call-ls' } },
+          }),
+          terminalCommand('call-grep', ['grep', '-r', 'sk-', '.']),
+          terminalOutput('call-grep', `./a.txt: ${FAKE_API_KEY.slice(0, 4)}`, {
+            status: 'failed',
+            _meta: { terminal_exit: { exit_code: 1, signal: null, terminal_id: 'call-grep' } },
+          }),
+          textUpdate('agent_message_chunk', 'Done.', 'msg-terminal'),
+        ],
+      },
+    ],
+  },
 };
 
 function parseArgs(argv) {
@@ -598,6 +722,166 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function recordPid(role, pid) {
+  if (scenario.pidFile && pid) fs.appendFileSync(scenario.pidFile, `${role} ${pid}\n`);
+}
+
+/** A child that runs until it is killed. */
+function startLongLivedChild() {
+  return spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+}
+
+/** Whether a command this process runs sees ELECTRON_RUN_AS_NODE. */
+function commandSeesRunAsNode() {
+  const result =
+    process.platform === 'win32'
+      ? spawnSync(process.env['ComSpec'] || 'cmd.exe', ['/d', '/c', `set ${RUN_AS_NODE}`], {
+          stdio: 'ignore',
+          windowsHide: true,
+        })
+      : spawnSync('/bin/sh', ['-c', 'test -n "${' + RUN_AS_NODE + '+x}"'], { stdio: 'ignore' });
+  return result.status === 0;
+}
+
+function runAsNodeReport() {
+  return {
+    electron: process.versions.electron ?? null,
+    preloaded: process.execArgv.includes('--require') || process.execArgv.includes('-r'),
+    sees: RUN_AS_NODE in process.env,
+    commandSees: commandSeesRunAsNode(),
+  };
+}
+
+/** Like codex-acp starting Codex: this script on the same executable, with this environment. */
+function probeChild() {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [__filename, PROBE_CHILD], {
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let output = '';
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve({ answered: false });
+    }, PROBE_CHILD_WAIT_MS);
+    child.stdout.on('data', (data) => {
+      output += data;
+    });
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve({ answered: false });
+    });
+    child.on('close', () => {
+      clearTimeout(timer);
+      try {
+        resolve({ answered: true, ...JSON.parse(output) });
+      } catch {
+        resolve({ answered: false });
+      }
+    });
+  });
+}
+
+/** The same child through util.promisify(execFile), as codex-acp runs its helper commands. */
+async function probeChildByExecFile() {
+  try {
+    const { stdout } = await promisify(execFile)(process.execPath, [__filename, PROBE_CHILD], {
+      env: process.env,
+      timeout: PROBE_CHILD_WAIT_MS,
+      windowsHide: true,
+    });
+    return { answered: true, ...JSON.parse(stdout) };
+  } catch {
+    return { answered: false };
+  }
+}
+
+/**
+ * Starts the command detached through a launcher, as PowerShell's Start opens a login page in a browser
+ * that was not running, and records the launcher, then the command as soon as the launcher reports it
+ * started it. The launcher exits then, and the promise resolves once it is gone, as codex-acp's `open`
+ * waits for PowerShell on Windows; with `stays`, the launcher runs on and the promise resolves as soon
+ * as the command started. `delayMs` makes the launcher wait that long first (a slow or cold PowerShell).
+ */
+function openBrowserStandIn(command, stays, delayMs) {
+  if (process.platform === 'win32') return startThroughPowerShell(command, stays, delayMs);
+  const launcher = [
+    "const { spawn } = require('node:child_process');",
+    'const [stays, delayMs, command, ...args] = process.argv.slice(1);',
+    'setTimeout(() => {',
+    "  const browser = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true });",
+    '  browser.unref();',
+    "  browser.on('spawn', () => process.stdout.write(`${browser.pid}\\n`));",
+    "  if (stays === 'stays') setInterval(() => {}, 1000);",
+    '}, Number(delayMs));',
+  ].join('\n');
+  const child = spawn(
+    process.execPath,
+    ['-e', launcher, stays ? 'stays' : 'exits', String(delayMs), ...command],
+    { stdio: ['ignore', 'pipe', 'ignore'] },
+  );
+  return launched(child, stays);
+}
+
+/**
+ * Records a browser launcher and, once it printed it, the pid of the browser it started: also when the
+ * sign-in ends before the launcher does. Resolves once the launcher is gone, or with `stays` once the
+ * browser started.
+ */
+function launched(child, stays) {
+  recordPid('browser-launcher', child.pid);
+  return new Promise((resolve) => {
+    let output = '';
+    let reported = false;
+    child.stdout.on('data', (data) => {
+      output += data;
+      if (!reported && output.includes('\n')) {
+        reported = true;
+        recordPid('browser', Number(output.trim()) || null);
+        if (stays) resolve();
+      }
+    });
+    child.on('error', () => resolve());
+    child.on('close', () => resolve());
+  });
+}
+
+/** A command-line argument as the Windows C runtime reads it back. */
+function windowsArgument(text) {
+  if (text !== '' && !/[\s"]/.test(text)) return text;
+  return `"${text.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
+}
+
+/**
+ * openBrowserStandIn on Windows: through PowerShell's Start-Process, like
+ * codex-acp's `Start` (the shell starts the program, so it inherits no handle
+ * of the mock's, as a browser started that way does not).
+ */
+function startThroughPowerShell([file, ...args], stays, delayMs) {
+  const quote = (text) => `'${text.replace(/'/g, "''")}'`;
+  const argumentList =
+    args.length > 0 ? ` -ArgumentList ${quote(args.map(windowsArgument).join(' '))}` : '';
+  const script = [
+    "$ProgressPreference = 'SilentlyContinue'",
+    delayMs > 0 ? `Start-Sleep -Milliseconds ${delayMs}` : '',
+    `$browser = Start-Process -FilePath ${quote(file)}${argumentList} -WindowStyle Hidden -PassThru`,
+    '[Console]::Out.WriteLine($browser.Id)',
+    stays ? 'while ($true) { Start-Sleep -Seconds 1 }' : '',
+  ].join('\n');
+  const powerShell = `${process.env['SystemRoot'] || 'C:\\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  const child = spawn(
+    powerShell,
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-EncodedCommand',
+      Buffer.from(script, 'utf16le').toString('base64'),
+    ],
+    { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
+  );
+  return launched(child, stays);
+}
+
 async function runStep(step) {
   if (step.update) sendUpdate(step.update);
   else if (step.delayMs !== undefined) await delay(step.delayMs);
@@ -630,10 +914,23 @@ async function runStep(step) {
     const electron = process.versions.electron ?? 'none';
     agentMessage(`runtime: node ${process.versions.node}, electron ${electron}`, 'msg-runtime');
   } else if (step.spawnChild) {
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      stdio: 'ignore',
-    });
+    const child = startLongLivedChild();
+    recordPid('child', child.pid);
     agentMessage(`child pid: ${child.pid}`, 'msg-child');
+  } else if (step.probeRunAsNode) {
+    const report = {
+      adapter: runAsNodeReport(),
+      codex: await probeChild(),
+      execFileChild: await probeChildByExecFile(),
+    };
+    sendUpdate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call-probe-run-as-node',
+      title: `Probe ${RUN_AS_NODE}`,
+      kind: 'execute',
+      status: 'completed',
+      rawOutput: report,
+    });
   } else if (step.waitForCancel) await waitForCancel();
   else if (step.stderr !== undefined) process.stderr.write(`${step.stderr}\n`);
   else if (step.malformed !== undefined) writeLine(step.malformed);
@@ -692,11 +989,19 @@ function initialize(id) {
   });
 }
 
-function authenticate(id, params) {
+async function authenticate(id, params) {
   const methodId = params && params.methodId;
   if (!scenario.authMethods.some((method) => method.id === methodId)) {
     answerError(id, { code: -32600, message: 'Invalid request' });
     return;
+  }
+  if (scenario.browserStandIn) {
+    // codex-acp opens the login page first, whether the sign-in then succeeds, fails or never ends.
+    await openBrowserStandIn(
+      scenario.browserStandIn,
+      scenario.browserLauncher === 'stays',
+      scenario.browserLauncherDelayMs || 0,
+    );
   }
   if (scenario.authenticate === 'never') return;
   if (scenario.authenticate === 'fail') {
@@ -766,7 +1071,7 @@ function handle(message) {
     case 'initialize':
       return initialize(id);
     case 'authenticate':
-      return authenticate(id, params);
+      return void authenticate(id, params);
     case 'session/new':
       return newSession(id, params);
     case 'session/prompt':
@@ -783,6 +1088,8 @@ function main() {
   if (scenario.exitAtStart !== undefined && scenario.exitAtStart !== null) {
     process.exit(scenario.exitAtStart);
   }
+  recordPid('adapter', process.pid);
+  if (scenario.childAtStart) recordPid('startup-child', startLongLivedChild().pid);
   for (const line of scenario.stderrAtStart || []) process.stderr.write(`${line}\n`);
   if (scenario.stdoutAtStart) writeLine(scenario.stdoutAtStart);
   const lines = readline.createInterface({ input: process.stdin });
@@ -803,4 +1110,8 @@ function main() {
   });
 }
 
-main();
+if (process.argv.includes(PROBE_CHILD)) {
+  process.stdout.write(JSON.stringify(runAsNodeReport()));
+} else {
+  main();
+}

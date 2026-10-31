@@ -55,12 +55,22 @@ public final class ProcessTreeKiller {
     }
 
     /**
-     * Kills the descendants of {@code root} but not {@code root} itself.
+     * Kills the descendants of {@code root} but not {@code root} itself: the runtime's cleanup when it
+     * ends (an orderly shutdown, or the halt after the grace period). A web browser that a sign-in released
+     * from the runtime's job (the user's, {@link ChildProcessContainment#isReleased}, {@link WebBrowsers}) is
+     * spared; another process the sign-in released is killed like the rest.
      *
      * @return {@code true} when every killed process exited within {@code timeout}
      */
     public static boolean killDescendants(ProcessHandle root, Duration timeout) {
-        return destroyAndAwait(root.descendants().toList(), timeout);
+        List<ProcessHandle> descendants = root.descendants().toList();
+        return destroyAndAwait(
+                descendants.stream().filter(process -> !isTheUsersBrowser(process)).toList(),
+                timeout);
+    }
+
+    private static boolean isTheUsersBrowser(ProcessHandle process) {
+        return ChildProcessContainment.isReleased(process) && WebBrowsers.isWebBrowser(process);
     }
 
     private static boolean destroyAndAwait(List<ProcessHandle> targets, Duration timeout) {
